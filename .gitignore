@@ -1,0 +1,17 @@
+# .NET
+bin/
+obj/
+*.user
+
+# Uploaded document storage (runtime data, not source)
+App_Data/
+
+# Node
+node_modules/
+dist/
+
+# Env
+.env.local
+
+# OS
+.DS_Store
