@@ -1,0 +1,30 @@
+using System.Collections.Concurrent;
+using CitadelIQ.Application.Interfaces;
+using CitadelIQ.Domain.Entities;
+
+namespace CitadelIQ.Infrastructure.Persistence;
+
+public class InMemoryEmbeddingRepository : IEmbeddingRepository
+{
+    private readonly ConcurrentDictionary<Guid, DocumentEmbedding> _embeddings = new();
+
+    public Task AddRangeAsync(IReadOnlyCollection<DocumentEmbedding> embeddings, CancellationToken cancellationToken = default)
+    {
+        foreach (var embedding in embeddings)
+        {
+            _embeddings[embedding.ChunkId] = embedding;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<DocumentEmbedding>> GetByChunkIdsAsync(IReadOnlyCollection<Guid> chunkIds, CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<DocumentEmbedding> embeddings = chunkIds
+            .Where(_embeddings.ContainsKey)
+            .Select(id => _embeddings[id])
+            .ToList();
+
+        return Task.FromResult(embeddings);
+    }
+}

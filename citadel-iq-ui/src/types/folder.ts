@@ -20,6 +20,7 @@ export interface DocumentSummaryDto {
   sizeBytes: number;
   uploadedAtUtc: string;
   status: ProcessingStatus;
+  failureReason: string | null;
 }
 
 export interface FolderPathSegmentDto {

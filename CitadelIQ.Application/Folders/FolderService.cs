@@ -6,7 +6,11 @@ using CitadelIQ.Domain.Entities;
 
 namespace CitadelIQ.Application.Folders;
 
-public class FolderService(IFolderRepository folderRepository, IDocumentRepository documentRepository, IMapper mapper) : IFolderService
+public class FolderService(
+    IFolderRepository folderRepository,
+    IDocumentRepository documentRepository,
+    FolderPathBuilder folderPathBuilder,
+    IMapper mapper) : IFolderService
 {
     public async Task<FolderDto> GetByIdAsync(Guid folderId, CancellationToken cancellationToken = default)
     {
@@ -21,7 +25,7 @@ public class FolderService(IFolderRepository folderRepository, IDocumentReposito
         var folder = await folderRepository.GetByIdAsync(folderId, cancellationToken)
             ?? throw new NotFoundException("Folder not found.");
 
-        var folderPath = await BuildFolderPathAsync(folder, cancellationToken);
+        var folderPath = await folderPathBuilder.BuildAsync(folder, cancellationToken);
         var subfolders = await folderRepository.GetChildrenAsync(folder.Id, cancellationToken);
         var documents = await documentRepository.GetByFolderIdAsync(folder.Id, cancellationToken);
 
@@ -45,21 +49,5 @@ public class FolderService(IFolderRepository folderRepository, IDocumentReposito
         var folder = Folder.Create(name, parentFolderId);
         await folderRepository.AddAsync(folder, cancellationToken);
         return mapper.Map<FolderDto>(folder);
-    }
-
-    private async Task<IReadOnlyList<FolderPathSegmentDto>> BuildFolderPathAsync(Folder folder, CancellationToken cancellationToken)
-    {
-        var path = new List<FolderPathSegmentDto> { mapper.Map<FolderPathSegmentDto>(folder) };
-        var current = folder;
-
-        while (current.ParentFolderId is { } parentId)
-        {
-            current = await folderRepository.GetByIdAsync(parentId, cancellationToken)
-                ?? throw new NotFoundException("Folder not found.");
-            path.Add(mapper.Map<FolderPathSegmentDto>(current));
-        }
-
-        path.Reverse();
-        return path;
     }
 }

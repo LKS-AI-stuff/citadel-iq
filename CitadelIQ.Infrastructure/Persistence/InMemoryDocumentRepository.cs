@@ -36,6 +36,15 @@ public class InMemoryDocumentRepository : IDocumentRepository
         return Task.FromResult(documents);
     }
 
+    public Task<IReadOnlyList<Document>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<Document> documents = _documents.Values
+            .OrderBy(d => d.FileName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Task.FromResult(documents);
+    }
+
     public Task AddAsync(Document document, CancellationToken cancellationToken = default)
     {
         _documents[document.Id] = document;

@@ -11,5 +11,6 @@ public class MappingProfile : Profile
         CreateMap<Folder, FolderDto>();
         CreateMap<Folder, FolderPathSegmentDto>();
         CreateMap<Document, DocumentSummaryDto>();
+        CreateMap<Document, DocumentStatusDto>();
     }
 }

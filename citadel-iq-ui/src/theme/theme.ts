@@ -1,36 +1,38 @@
-import { createTheme } from '@mui/material/styles';
+import { createTheme, type PaletteMode } from '@mui/material/styles';
 
-export const theme = createTheme({
-  palette: {
-    mode: 'light',
-    primary: {
-      main: '#2563eb',
+export function getTheme(mode: PaletteMode) {
+  return createTheme({
+    palette: {
+      mode,
+      primary: {
+        main: '#2563eb',
+      },
+      background:
+        mode === 'light'
+          ? { default: '#f8fafc', paper: '#ffffff' }
+          : { default: '#0f172a', paper: '#1e293b' },
     },
-    background: {
-      default: '#f8fafc',
-      paper: '#ffffff',
+    shape: {
+      borderRadius: 8,
     },
-  },
-  shape: {
-    borderRadius: 8,
-  },
-  typography: {
-    fontFamily: [
-      'Inter',
-      'system-ui',
-      '-apple-system',
-      'Segoe UI',
-      'Roboto',
-      'sans-serif',
-    ].join(','),
-  },
-  components: {
-    MuiPaper: {
-      styleOverrides: {
-        root: {
-          backgroundImage: 'none',
+    typography: {
+      fontFamily: [
+        'Inter',
+        'system-ui',
+        '-apple-system',
+        'Segoe UI',
+        'Roboto',
+        'sans-serif',
+      ].join(','),
+    },
+    components: {
+      MuiPaper: {
+        styleOverrides: {
+          root: {
+            backgroundImage: 'none',
+          },
         },
       },
     },
-  },
-});
+  });
+}

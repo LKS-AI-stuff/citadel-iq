@@ -9,4 +9,5 @@ public record DocumentSummaryDto(
     string ContentType,
     long SizeBytes,
     DateTimeOffset UploadedAtUtc,
-    ProcessingStatus Status);
+    ProcessingStatus Status,
+    string? FailureReason);
