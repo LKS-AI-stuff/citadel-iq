@@ -10,4 +10,6 @@ public interface IDocumentStorage
     Task SaveAsync(Guid documentId, string fileExtension, Stream content, CancellationToken cancellationToken = default);
 
     Task<Stream> OpenReadAsync(Guid documentId, string fileExtension, CancellationToken cancellationToken = default);
+
+    Task DeleteAsync(Guid documentId, string fileExtension, CancellationToken cancellationToken = default);
 }

@@ -5,7 +5,7 @@ import type { SearchResultDto, SearchScope } from '../types/search';
 
 export function useSearch(currentFolderId: string) {
   const [query, setQuery] = useState('');
-  const [scope, setScope] = useState<SearchScope>('EntirePortal');
+  const [scope, setScope] = useState<SearchScope>('CurrentFolder');
   const [results, setResults] = useState<SearchResultDto[] | null>(null);
   const [searchedQuery, setSearchedQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);

@@ -71,10 +71,15 @@ The UI opens at `http://localhost:5173`.
 
 1. Open `http://localhost:5173` — you'll land on an empty **Home**.
 2. Click **New folder** to create a folder (there's no seed data — you build the structure yourself).
-3. Click **Upload** and drop in a PDF, DOCX, TXT, CSV, or XLSX file. Watch its status chip progress
+   Each folder card has Open, Rename (inline text box, Enter to save/Escape to cancel), and Delete
+   icons; deleting a folder cascades to every subfolder and document inside it. A **Back** button
+   appears next to "New folder" whenever you're not at Home, for a quick way up a level.
+3. Click **Upload** and drop in a PDF, DOCX, TXT, CSV, or XLSX file. Watch its status icon progress
    through *Extracting text… → Creating searchable sections… → Generating embeddings… → Ready*.
 4. Click the search icon in the top bar, type a natural-language question, and see ranked results
-   with similarity scores — even if your wording doesn't match the document's wording.
+   with similarity scores — even if your wording doesn't match the document's wording. Search
+   defaults to the folder you're currently viewing; switch to "+ Subfolders" or "Entire portal" to
+   widen it.
 
 ## ⚙️ Configuration
 
@@ -83,7 +88,7 @@ The UI opens at `http://localhost:5173`.
 | `OpenAI` | `EmbeddingModel` | `text-embedding-3-small` | In `appsettings.json` |
 | `OpenAI` | `ApiKey` | — | **User-secrets only**, never in `appsettings.json` |
 | `Upload` | `MaxFileSizeMB` / `AllowedExtensions` | `20` / pdf, docx, txt, csv, xlsx | Configurable allow-list |
-| `Chunking` | `ChunkSize` / `ChunkOverlap` | `800` / `150` | Characters |
+| `Chunking` | `ChunkSize` / `ChunkOverlap` | `400` / `80` | Characters |
 | `Search` | `DefaultTopK` / `MaxTopK` | `10` / `50` | Result count |
 | `Storage` | `DocumentsPath` | `App_Data/documents` | Raw file storage location |
 
@@ -127,9 +132,12 @@ npm run preview  # Preview the production build
 | `GET` | `/api/folders/{id}` | Folder metadata |
 | `GET` | `/api/folders/{id}/contents` | Subfolders + documents + breadcrumb |
 | `POST` | `/api/folders` | Create a folder |
+| `PUT` | `/api/folders/{id}` | Rename a folder |
+| `DELETE` | `/api/folders/{id}` | Delete a folder, cascading to all subfolders + their documents |
 | `POST` | `/api/documents/upload` | Upload a document (multipart) |
 | `GET` | `/api/documents/{id}/status` | Processing status (for polling) |
 | `GET` | `/api/documents/{id}/download` | Download the original file |
+| `DELETE` | `/api/documents/{id}` | Delete a document (removes stored file, chunks, and embeddings) |
 | `POST` | `/api/search` | Semantic search |
 | `GET` | `/health` | Health check |
 

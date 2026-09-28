@@ -6,4 +6,6 @@ export const foldersApi = {
   getContents: (folderId: string) => apiClient.get<FolderContentsDto>(`/api/folders/${folderId}/contents`),
   create: (parentFolderId: string, name: string) =>
     apiClient.post<FolderDto>('/api/folders', { parentFolderId, name }),
+  rename: (folderId: string, name: string) => apiClient.put<FolderDto>(`/api/folders/${folderId}`, { name }),
+  delete: (folderId: string) => apiClient.delete<void>(`/api/folders/${folderId}`),
 };

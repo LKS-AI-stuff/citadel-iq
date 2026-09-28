@@ -27,4 +27,15 @@ public class InMemoryDocumentChunkRepository : IDocumentChunkRepository
 
         return Task.FromResult(chunks);
     }
+
+    public Task DeleteByDocumentIdsAsync(IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken = default)
+    {
+        var documentIdSet = documentIds.ToHashSet();
+        foreach (var chunk in _chunks.Values.Where(c => documentIdSet.Contains(c.DocumentId)).ToList())
+        {
+            _chunks.TryRemove(chunk.Id, out _);
+        }
+
+        return Task.CompletedTask;
+    }
 }

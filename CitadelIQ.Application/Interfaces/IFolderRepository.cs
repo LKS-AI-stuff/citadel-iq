@@ -14,4 +14,10 @@ public interface IFolderRepository
     Task<bool> ExistsWithNameAsync(Guid parentFolderId, string name, CancellationToken cancellationToken = default);
 
     Task AddAsync(Folder folder, CancellationToken cancellationToken = default);
+
+    Task UpdateAsync(Folder folder, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes the given folder ids' records. Callers are responsible for deleting any
+    /// documents inside those folders first.</summary>
+    Task DeleteManyAsync(IReadOnlyCollection<Guid> folderIds, CancellationToken cancellationToken = default);
 }

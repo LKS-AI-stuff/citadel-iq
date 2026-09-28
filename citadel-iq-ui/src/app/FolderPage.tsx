@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Alert, Box, Button, Divider, Stack, alpha } from '@mui/material';
+import { Alert, Box, Button, Divider, Stack, alpha, useTheme } from '@mui/material';
+import ArrowBackOutlinedIcon from '@mui/icons-material/ArrowBackOutlined';
 import CreateNewFolderOutlinedIcon from '@mui/icons-material/CreateNewFolderOutlined';
 import UploadOutlinedIcon from '@mui/icons-material/UploadOutlined';
 import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
@@ -16,6 +17,7 @@ import { LoadingState } from '../components/common/LoadingState';
 import { GlassSurface } from '../components/common/GlassSurface';
 import { SectionHeader } from '../components/common/SectionHeader';
 import { useToast } from '../components/common/ToastProvider';
+import { folderAccentColor as getFolderAccentColor } from '../theme/glass';
 import { ROOT_FOLDER_ID } from '../constants';
 import type { ProcessingStatus } from '../types/folder';
 
@@ -26,6 +28,9 @@ export function FolderPage() {
   const currentFolderId = folderId ?? ROOT_FOLDER_ID;
   const navigate = useNavigate();
   const { contents, isLoading, error, refetch } = useFolderContents(currentFolderId);
+  const theme = useTheme();
+  const documentsAccentColor = theme.palette.success.main;
+  const subfoldersAccentColor = getFolderAccentColor(theme);
   const [isCreateFolderOpen, setCreateFolderOpen] = useState(false);
   const [isUploadOpen, setUploadOpen] = useState(false);
   const { showToast } = useToast();
@@ -80,6 +85,15 @@ export function FolderPage() {
       >
         {contents ? <Breadcrumbs items={contents.folderPath} onNavigate={goToFolder} /> : <Box />}
         <Stack direction="row" sx={{ gap: 1 }}>
+          {currentFolderId !== ROOT_FOLDER_ID && (
+            <Button
+              variant="outlined"
+              startIcon={<ArrowBackOutlinedIcon />}
+              onClick={() => goToFolder(contents?.folder.parentFolderId ?? ROOT_FOLDER_ID)}
+            >
+              Back
+            </Button>
+          )}
           <Button
             variant="outlined"
             startIcon={<CreateNewFolderOutlinedIcon />}
@@ -101,8 +115,8 @@ export function FolderPage() {
           <GlassSurface component="section" sx={{ p: { xs: 2, sm: 3 } }}>
             <Box component="section">
               <SectionHeader
-                icon={<InsertDriveFileOutlinedIcon sx={{ color: '#4f46e5', fontSize: 20 }} />}
-                color="#4f46e5"
+                icon={<InsertDriveFileOutlinedIcon sx={{ color: documentsAccentColor, fontSize: 20 }} />}
+                color={documentsAccentColor}
                 title="Documents"
                 count={contents.documents.length}
               />
@@ -116,7 +130,12 @@ export function FolderPage() {
               ) : (
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 2 }}>
                   {contents.documents.map((document, index) => (
-                    <FileCard key={document.id} document={document} animationDelayMs={index * 35} />
+                    <FileCard
+                      key={document.id}
+                      document={document}
+                      animationDelayMs={index * 35}
+                      onDeleted={refetch}
+                    />
                   ))}
                 </Box>
               )}
@@ -126,8 +145,8 @@ export function FolderPage() {
 
             <Box component="section">
               <SectionHeader
-                icon={<FolderIcon sx={{ color: '#4f46e5', fontSize: 20 }} />}
-                color="#4f46e5"
+                icon={<FolderIcon sx={{ color: subfoldersAccentColor, fontSize: 20 }} />}
+                color={subfoldersAccentColor}
                 title="Subfolders"
                 count={contents.subfolders.length}
               />
@@ -141,7 +160,14 @@ export function FolderPage() {
               ) : (
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 2 }}>
                   {contents.subfolders.map((folder, index) => (
-                    <FolderCard key={folder.id} folder={folder} onOpen={goToFolder} animationDelayMs={index * 35} />
+                    <FolderCard
+                      key={folder.id}
+                      folder={folder}
+                      onOpen={goToFolder}
+                      onDeleted={refetch}
+                      onRenamed={refetch}
+                      animationDelayMs={index * 35}
+                    />
                   ))}
                 </Box>
               )}

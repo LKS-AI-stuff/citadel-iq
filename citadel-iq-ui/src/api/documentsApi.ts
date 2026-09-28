@@ -54,4 +54,5 @@ export const documentsApi = {
   getStatus: (documentId: string) =>
     apiClient.get<{ id: string; status: string; failureReason: string | null }>(`/api/documents/${documentId}/status`),
   getDownloadUrl: (documentId: string) => `${API_BASE_URL}/api/documents/${documentId}/download`,
+  delete: (documentId: string) => apiClient.delete<void>(`/api/documents/${documentId}`),
 };

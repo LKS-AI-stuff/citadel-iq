@@ -32,6 +32,13 @@ public class LocalDiskDocumentStorage(IOptions<StorageOptions> options, IHostEnv
         return Task.FromResult(stream);
     }
 
+    public Task DeleteAsync(Guid documentId, string fileExtension, CancellationToken cancellationToken = default)
+    {
+        var path = GetFilePath(documentId, fileExtension);
+        File.Delete(path);
+        return Task.CompletedTask;
+    }
+
     private string GetFilePath(Guid documentId, string fileExtension) =>
         Path.Combine(RootPath, $"{documentId}{fileExtension}");
 }

@@ -40,4 +40,11 @@ public class DocumentsController(IDocumentService documentService) : ControllerB
         var (content, fileName, contentType) = await documentService.DownloadAsync(documentId, cancellationToken);
         return File(content, contentType, fileName);
     }
+
+    [HttpDelete("{documentId:guid}")]
+    public async Task<IActionResult> Delete(Guid documentId, CancellationToken cancellationToken)
+    {
+        await documentService.DeleteDocumentAsync(documentId, cancellationToken);
+        return NoContent();
+    }
 }

@@ -1,5 +1,5 @@
-import { Box, Chip, LinearProgress, Stack, Tooltip, Typography, alpha } from '@mui/material';
-import { FileIcon, getFileAccentColor } from '../documents/FileIcon';
+import { Box, Chip, LinearProgress, Stack, Tooltip, Typography, alpha, useTheme } from '@mui/material';
+import { FileIcon } from '../documents/FileIcon';
 import { GlassSurface } from '../common/GlassSurface';
 import { IconBadge } from '../common/IconBadge';
 import { highlightMatches } from '../../utils/highlightMatches';
@@ -19,7 +19,8 @@ function similarityColor(score: number): 'success' | 'warning' | 'inherit' {
 }
 
 export function SearchResultCard({ result, query, rank, animationDelayMs = 0 }: SearchResultCardProps) {
-  const accentColor = getFileAccentColor(result.fileName);
+  const theme = useTheme();
+  const accentColor = theme.palette.success.main;
   const scorePercent = Math.max(0, Math.min(1, result.similarityScore)) * 100;
 
   return (
@@ -45,7 +46,7 @@ export function SearchResultCard({ result, query, rank, animationDelayMs = 0 }: 
           #{rank}
         </Typography>
         <IconBadge color={accentColor} size={32}>
-          <FileIcon fileName={result.fileName} sx={{ fontSize: 16 }} />
+          <FileIcon fileName={result.fileName} sx={{ fontSize: 16, color: accentColor }} />
         </IconBadge>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography variant="subtitle2" noWrap sx={{ fontWeight: 700 }}>

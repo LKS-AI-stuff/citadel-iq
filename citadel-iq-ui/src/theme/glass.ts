@@ -1,5 +1,32 @@
 import { alpha, type Theme } from '@mui/material/styles';
 
+/** Tinted-circle treatment for inline card action icons (download/open/delete) — a softer
+ * version of `IconBadge`'s colored background, sized for an `IconButton` rather than a large
+ * file/folder glyph. Kept muted (not fully greyed out) while disabled so it still reads as the
+ * same icon, just unavailable. */
+export function actionIconButtonSx(color: string) {
+  return {
+    color,
+    bgcolor: alpha(color, 0.12),
+    transition: 'background-color 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+    '&:hover': {
+      bgcolor: alpha(color, 0.22),
+      transform: 'scale(1.08)',
+    },
+    '&.Mui-disabled': {
+      color: alpha(color, 0.35),
+      bgcolor: alpha(color, 0.06),
+    },
+  } as const;
+}
+
+/** The folder accent used for folder icons/badges/headers — the theme's indigo primary, lightened
+ * for dark mode (matches MuiButton's `outlined` override in theme.ts) since the flat `#4f46e5`
+ * primary tone is too dark/low-contrast against the near-black glass surface. */
+export function folderAccentColor(theme: Theme): string {
+  return theme.palette.mode === 'light' ? '#4338ca' : '#a5b4fc';
+}
+
 /** Mirrors templatemo_592_glossy_touch's diagonal gradient body background.
  * Dark mode reuses the template's palette verbatim; light mode is a pastel
  * equivalent so glass text/cards stay legible without a dark backdrop. */

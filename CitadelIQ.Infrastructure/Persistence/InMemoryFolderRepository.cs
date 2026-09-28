@@ -54,6 +54,22 @@ public class InMemoryFolderRepository : IFolderRepository
         return Task.CompletedTask;
     }
 
+    public Task UpdateAsync(Folder folder, CancellationToken cancellationToken = default)
+    {
+        _folders[folder.Id] = folder;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteManyAsync(IReadOnlyCollection<Guid> folderIds, CancellationToken cancellationToken = default)
+    {
+        foreach (var folderId in folderIds)
+        {
+            _folders.TryRemove(folderId, out _);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private void CollectDescendants(Guid parentFolderId, List<Guid> accumulator)
     {
         foreach (var child in _folders.Values.Where(f => f.ParentFolderId == parentFolderId))

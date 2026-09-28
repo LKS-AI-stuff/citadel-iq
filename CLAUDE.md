@@ -141,9 +141,10 @@ citadel-iq-ui/src/
  │   ├─ documents/  FileCard, FileIcon, ProcessingStatusIcon
  │   ├─ upload/     UploadDialog, UploadDropzone
  │   ├─ search/     SearchPanel, SearchScopeSelector, SearchInput, SearchResults, SearchResultCard
- │   └─ common/      EmptyState, LoadingState, ToastProvider, CardActionsMenu, GlassSurface,
+ │   └─ common/      EmptyState, LoadingState, ToastProvider, ConfirmDialog, GlassSurface,
  │                    IconBadge, SectionHeader, SearchInfoPanel
- ├─ hooks/          useFolderContents, useCreateFolder, useUpload, useSearch
+ ├─ hooks/          useFolderContents, useCreateFolder, useRenameFolder, useDeleteFolder,
+ │                   useDeleteDocument, useUpload, useSearch
  ├─ api/            apiClient (fetch wrapper + ApiError), foldersApi, documentsApi, searchApi
  ├─ theme/          ColorModeProvider (light/dark, persisted to localStorage), theme.ts, glass.ts
  ├─ types/          folder.ts, search.ts — hand-kept in sync with backend DTOs
@@ -161,7 +162,24 @@ backdrop-blurred surface — rather than plain MUI `Paper`, so the look stays co
 renders one `GlassSurface` panel containing two sections (Documents, then Subfolders), each with a
 `SectionHeader` (icon + title + count chip); processing status on a `FileCard` is a small inline
 `ProcessingStatusIcon` (spinner → checkmark/error), not a text chip, to keep cards as simple as
-`FolderCard`.
+`FolderCard`. Card actions are inline `IconButton`s, not an overflow menu: `FileCard` shows
+Download + Delete, `FolderCard` shows Open + Rename + Delete. Delete on either card opens a shared
+`ConfirmDialog` (`components/common/ConfirmDialog.tsx`) whose description text differs per case —
+the folder version explicitly warns that all subfolders and documents in the subtree will go with
+it — before calling `DELETE /api/folders/{id}` or `DELETE /api/documents/{id}`. `FolderCard`'s
+Rename swaps the name into an inline `TextField` and swaps Open+Rename+Delete for Save + Cancel
+icons (Enter also saves, Escape also cancels) — the card's own `onClick` navigation is disabled
+while editing so clicking the textbox doesn't navigate into the folder.
+
+**Action icon colors** (`theme/glass.ts`'s `actionIconButtonSx(color)` — a tinted circular
+background at rest, stronger on hover, muted while disabled): every file type's icon/badge and the
+Download button share one accent, `theme.palette.success.main` (there's no longer a
+color-per-extension palette); Open/Rename and the folder icon/badge share the theme's indigo,
+lightened for dark mode via `theme/glass.ts`'s `folderAccentColor(theme)` (`#4338ca` light /
+`#a5b4fc` dark — matches `MuiButton`'s `outlined` override in `theme.ts`, since the flat
+`#4f46e5` primary tone is too low-contrast against the near-black glass surface); Delete and
+`ConfirmDialog`'s confirm button use `theme.palette.error.main`. Deliberately three distinct hues
+(green / indigo / red) so same-row actions don't blend together.
 
 **Persistent sidebar** (`components/common/SearchInfoPanel.tsx`, mounted once in `AppShell`, not
 per-page): an evergreen "how search works" panel — copy is deliberately *not* a one-time "Welcome"
@@ -176,6 +194,12 @@ as a gap on both sides that grows with the window. Cap the width but don't cente
 fall to the right instead.
 
 Notes:
+- `FolderPage`'s toolbar shows a **Back** button (before "New folder") whenever the current folder
+  isn't Home, navigating to `contents.folder.parentFolderId` — added because relying on the
+  breadcrumbs alone to go up a level isn't discoverable for every user.
+- `useSearch`'s default `SearchScope` is `CurrentFolder` ("This folder"), not `EntirePortal` — and
+  `SearchScopeSelector`'s `OPTIONS` array orders them This folder → +Subfolders → Entire portal,
+  so the default matches the first/leftmost toggle button.
 - `AppShell` derives the "current folder" for the search panel via `useParams()` — React Router
   v6 merges params from the whole matched route branch, so this works even though `AppShell` is
   the parent layout route and `folderId` is defined on the child route.
@@ -257,12 +281,26 @@ GET    /api/folders/root                    # well-known Home folder id (Guid.Em
 GET    /api/folders/{folderId}              # folder metadata
 GET    /api/folders/{folderId}/contents     # folder + breadcrumb (folderPath) + subfolders + documents
 POST   /api/folders                         # { parentFolderId, name }
+PUT    /api/folders/{folderId}              # { name } — rename
+DELETE /api/folders/{folderId}              # cascades: all descendant subfolders + all documents in the subtree
 POST   /api/documents/upload                # multipart: folderId, file
 GET    /api/documents/{documentId}/status   # { id, status, failureReason }
 GET    /api/documents/{documentId}/download # streams original file, original filename
+DELETE /api/documents/{documentId}          # removes stored file, chunks, and embeddings
 POST   /api/search                          # { query, currentFolderId, searchScope, topK? }
 GET    /health
 ```
+
+`DELETE /api/folders/{folderId}` rejects the well-known root ("Home") folder with a 400. Folder
+deletion walks the full descendant tree server-side (`IFolderRepository.GetDescendantIdsAsync`,
+already recursive) and deletes every document found anywhere in that subtree via
+`IDocumentService.DeleteDocumentsAsync` before removing the folder records themselves — chunks and
+embeddings are deleted before the raw file and document record, so a crash mid-delete never leaves
+orphaned chunks/embeddings pointing at a missing document.
+
+`PUT /api/folders/{folderId}` also rejects renaming the root ("Home") folder with a 400, and
+rejects a name collision with a sibling (same `ExistsWithNameAsync` check `POST /api/folders`
+uses), except when the new name differs only by case from the folder's current name.
 
 `ProcessingStatus` and `SearchScope` enums serialize as PascalCase strings (JSON string enum
 converter registered in `Program.cs`), e.g. `"searchScope": "CurrentFolderAndSubfolders"`.
@@ -286,8 +324,9 @@ converter registered in `Program.cs`), e.g. `"searchScope": "CurrentFolderAndSub
 ## Out of scope for this version
 
 Authentication/authorization, per-user document spaces, PostgreSQL/pgvector, EF Core/FluentMigrator,
-RAG/LLM-generated answers, search history/pagination, hybrid keyword search, folder/file rename,
-move, delete, bulk operations, document previews, audit logging, background job queues (the
-current dispatcher is in-process fire-and-forget, not a persistent queue). See
-[PLAN.md](./PLAN.md) §9 and §21 for the full future-enhancements list and the reasoning behind
-each deferral.
+RAG/LLM-generated answers, search history/pagination, hybrid keyword search, file rename, move,
+bulk operations, document previews, audit logging, background job queues (the current dispatcher
+is in-process fire-and-forget, not a persistent queue). See [PLAN.md](./PLAN.md) §9 and §21 for the
+full future-enhancements list and the reasoning behind each deferral. (Folder *rename* and
+*deletion* — including cascade delete of a folder's subtree — are in scope; see the API contract
+above.)

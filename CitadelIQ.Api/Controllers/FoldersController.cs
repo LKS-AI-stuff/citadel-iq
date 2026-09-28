@@ -34,4 +34,18 @@ public class FoldersController(IFolderService folderService) : ControllerBase
         var folder = await folderService.CreateFolderAsync(request.ParentFolderId, request.Name, cancellationToken);
         return Ok(folder);
     }
+
+    [HttpPut("{folderId:guid}")]
+    public async Task<ActionResult<FolderDto>> Rename(Guid folderId, [FromBody] RenameFolderRequest request, CancellationToken cancellationToken)
+    {
+        var folder = await folderService.RenameFolderAsync(folderId, request.Name, cancellationToken);
+        return Ok(folder);
+    }
+
+    [HttpDelete("{folderId:guid}")]
+    public async Task<IActionResult> Delete(Guid folderId, CancellationToken cancellationToken)
+    {
+        await folderService.DeleteFolderAsync(folderId, cancellationToken);
+        return NoContent();
+    }
 }

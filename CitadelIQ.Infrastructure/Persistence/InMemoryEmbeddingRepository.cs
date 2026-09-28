@@ -27,4 +27,14 @@ public class InMemoryEmbeddingRepository : IEmbeddingRepository
 
         return Task.FromResult(embeddings);
     }
+
+    public Task DeleteByChunkIdsAsync(IReadOnlyCollection<Guid> chunkIds, CancellationToken cancellationToken = default)
+    {
+        foreach (var chunkId in chunkIds)
+        {
+            _embeddings.TryRemove(chunkId, out _);
+        }
+
+        return Task.CompletedTask;
+    }
 }

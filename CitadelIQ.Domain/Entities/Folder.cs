@@ -36,6 +36,11 @@ public class Folder
         return new Folder(Guid.NewGuid(), trimmed, parentFolderId, DateTimeOffset.UtcNow);
     }
 
+    public void Rename(string name)
+    {
+        Name = ValidateName(name);
+    }
+
     private static string ValidateName(string name)
     {
         if (string.IsNullOrWhiteSpace(name))

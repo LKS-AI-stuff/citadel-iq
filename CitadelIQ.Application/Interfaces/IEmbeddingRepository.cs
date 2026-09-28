@@ -7,4 +7,6 @@ public interface IEmbeddingRepository
     Task AddRangeAsync(IReadOnlyCollection<DocumentEmbedding> embeddings, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<DocumentEmbedding>> GetByChunkIdsAsync(IReadOnlyCollection<Guid> chunkIds, CancellationToken cancellationToken = default);
+
+    Task DeleteByChunkIdsAsync(IReadOnlyCollection<Guid> chunkIds, CancellationToken cancellationToken = default);
 }

@@ -13,32 +13,21 @@ function getExtension(fileName: string): string {
   return fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
 }
 
-const ACCENT_COLORS: Record<string, string> = {
-  '.pdf': '#dc2626',
-  '.docx': '#2563eb',
-  '.xlsx': '#16a34a',
-  '.csv': '#16a34a',
-  '.txt': '#64748b',
-};
-
-export function getFileAccentColor(fileName: string): string {
-  return ACCENT_COLORS[getExtension(fileName)] ?? '#6366f1';
-}
-
+/** Icon shape still varies by file type; color is left to the caller (via `sx`) so every file
+ * type can share one accent instead of a color-per-extension palette. */
 export function FileIcon({ fileName, ...iconProps }: FileIconProps) {
   const extension = getExtension(fileName);
-  const color = ACCENT_COLORS[extension];
 
   switch (extension) {
     case '.pdf':
-      return <PictureAsPdfOutlinedIcon {...iconProps} sx={{ color, ...iconProps.sx }} />;
+      return <PictureAsPdfOutlinedIcon {...iconProps} />;
     case '.docx':
-      return <DescriptionOutlinedIcon {...iconProps} sx={{ color, ...iconProps.sx }} />;
+      return <DescriptionOutlinedIcon {...iconProps} />;
     case '.xlsx':
     case '.csv':
-      return <GridOnOutlinedIcon {...iconProps} sx={{ color, ...iconProps.sx }} />;
+      return <GridOnOutlinedIcon {...iconProps} />;
     case '.txt':
-      return <ArticleOutlinedIcon {...iconProps} sx={{ color, ...iconProps.sx }} />;
+      return <ArticleOutlinedIcon {...iconProps} />;
     default:
       return <InsertDriveFileOutlinedIcon {...iconProps} />;
   }

@@ -129,4 +129,34 @@ public class DocumentService(
 
         return (stream, document.FileName, document.ContentType);
     }
+
+    public async Task DeleteDocumentAsync(Guid documentId, CancellationToken cancellationToken = default)
+    {
+        var document = await documentRepository.GetByIdAsync(documentId, cancellationToken)
+            ?? throw new NotFoundException("Document not found.");
+
+        await DeleteDocumentsAsync([document], cancellationToken);
+    }
+
+    public async Task DeleteDocumentsAsync(IReadOnlyCollection<Document> documents, CancellationToken cancellationToken = default)
+    {
+        if (documents.Count == 0)
+        {
+            return;
+        }
+
+        var documentIds = documents.Select(d => d.Id).ToList();
+        var chunks = await chunkRepository.GetByDocumentIdsAsync(documentIds, cancellationToken);
+        var chunkIds = chunks.Select(c => c.Id).ToList();
+
+        await embeddingRepository.DeleteByChunkIdsAsync(chunkIds, cancellationToken);
+        await chunkRepository.DeleteByDocumentIdsAsync(documentIds, cancellationToken);
+
+        foreach (var document in documents)
+        {
+            var extension = Path.GetExtension(document.FileName).ToLowerInvariant();
+            await documentStorage.DeleteAsync(document.Id, extension, cancellationToken);
+            await documentRepository.DeleteAsync(document.Id, cancellationToken);
+        }
+    }
 }
