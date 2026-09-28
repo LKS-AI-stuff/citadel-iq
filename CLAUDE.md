@@ -134,19 +134,46 @@ LangChain, no RAG answer generation yet).
 
 ```
 citadel-iq-ui/src/
- ├─ app/            AppShell (layout + search panel host), TopNavigation, FolderPage (route)
+ ├─ app/            AppShell (layout + search panel host), TopNavigation, Footer, FloatingShapes,
+ │                   FolderPage (route)
  ├─ components/
  │   ├─ folders/    Breadcrumbs, FolderCard, CreateFolderDialog
- │   ├─ documents/  FileCard, FileIcon, ProcessingStatusChip
+ │   ├─ documents/  FileCard, FileIcon, ProcessingStatusIcon
  │   ├─ upload/     UploadDialog, UploadDropzone
  │   ├─ search/     SearchPanel, SearchScopeSelector, SearchInput, SearchResults, SearchResultCard
- │   └─ common/      EmptyState, LoadingState, ToastProvider, CardActionsMenu
+ │   └─ common/      EmptyState, LoadingState, ToastProvider, CardActionsMenu, GlassSurface,
+ │                    IconBadge, SectionHeader, SearchInfoPanel
  ├─ hooks/          useFolderContents, useCreateFolder, useUpload, useSearch
  ├─ api/            apiClient (fetch wrapper + ApiError), foldersApi, documentsApi, searchApi
- ├─ theme/          ColorModeProvider (light/dark, persisted to localStorage), theme.ts
+ ├─ theme/          ColorModeProvider (light/dark, persisted to localStorage), theme.ts, glass.ts
  ├─ types/          folder.ts, search.ts — hand-kept in sync with backend DTOs
  └─ utils/          highlightMatches.tsx — best-effort literal term highlighting in search snippets
 ```
+
+**Visual design — glassmorphism**: a diagonal gradient page background (`theme/glass.ts`'s
+`glossyBackground(mode)` — a fixed palette in dark mode, a pastel equivalent in light mode) with
+soft floating blurred shapes (`FloatingShapes`,
+`position: fixed`, `zIndex: -1`) drifting behind everything. Every card, panel, and bar
+(`FolderCard`, `FileCard`, `SearchResultCard`, `TopNavigation`, `Footer`, the search drawer, the
+Documents/Subfolders panel) is built from the shared `GlassSurface` component
+(`components/common/GlassSurface.tsx` + `theme/glass.ts`'s `glassSurfaceSx`) — a translucent,
+backdrop-blurred surface — rather than plain MUI `Paper`, so the look stays consistent. `FolderPage`
+renders one `GlassSurface` panel containing two sections (Documents, then Subfolders), each with a
+`SectionHeader` (icon + title + count chip); processing status on a `FileCard` is a small inline
+`ProcessingStatusIcon` (spinner → checkmark/error), not a text chip, to keep cards as simple as
+`FolderCard`.
+
+**Persistent sidebar** (`components/common/SearchInfoPanel.tsx`, mounted once in `AppShell`, not
+per-page): an evergreen "how search works" panel — copy is deliberately *not* a one-time "Welcome"
+message, since it's always visible, never remounts on navigation. It's a genuine CSS Grid column
+(`AppShell`'s root `display: grid`, `gridTemplateColumns: '300px 1fr'` from `md` up), `position:
+sticky` so it stays in view while scrolling, and `display: none` below `md` — there's no good place
+to stack it on a narrow screen without competing with the header, so it's a desktop-only extra.
+**Gotcha already hit once:** don't give `TopNavigation`/`Footer`/`<main>`'s inner content wrapper
+`mx: 'auto'` centering *inside* the content column now that the sidebar is permanent — the column
+is wider than the 1320px content cap on most screens, so `mx: 'auto'` spreads that leftover space
+as a gap on both sides that grows with the window. Cap the width but don't center; let excess space
+fall to the right instead.
 
 Notes:
 - `AppShell` derives the "current folder" for the search panel via `useParams()` — React Router
@@ -156,7 +183,16 @@ Notes:
   (`display`, `gap`, `fontWeight`, etc.) directly; everything must go through the `sx` prop. All
   components in this codebase already follow this; if you copy an example from older MUI docs
   that uses `<Box display="flex">`, it will fail to typecheck here.
-- Tailwind's `preflight` is disabled (`tailwind.config.js`) to avoid fighting MUI's `CssBaseline`.
+- **Tailwind v4 has no JS-config way to disable Preflight** (`corePlugins.preflight: false` in
+  `tailwind.config.js` is silently ignored — v4 dropped that option). Preflight is disabled instead
+  by importing `tailwindcss/theme.css` + `tailwindcss/utilities.css` directly in `index.css` rather
+  than the full `tailwindcss` entrypoint, so it never fights MUI's own `CssBaseline` reset.
+- The header (`TopNavigation`) is a plain glass bar, **not** `position: sticky` — deliberately, to
+  avoid a real CSS trap: an ancestor with `overflow-x: hidden` (used for the old decorative-blob
+  layer) silently turns into a scroll container when its `overflow-y` is left `visible` (browsers
+  coerce the mismatched axis to `auto`), which breaks `position: sticky` on any descendant. Keep
+  decorative overflow-hidden layers `position: absolute`/`fixed` and out of the ancestor chain of
+  anything that needs to stick.
 - Uploads use raw `XMLHttpRequest` (not `fetch`) specifically for `xhr.upload.onprogress` — `fetch`
   has no upload-progress event.
 - `useUpload`'s callback is passed a completed upload's `DocumentSummaryDto`; `FolderPage` uses it

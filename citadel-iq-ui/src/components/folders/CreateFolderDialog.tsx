@@ -7,6 +7,7 @@ import {
   DialogTitle,
   TextField,
 } from '@mui/material';
+import CreateNewFolderOutlinedIcon from '@mui/icons-material/CreateNewFolderOutlined';
 import { useCreateFolder } from '../../hooks/useCreateFolder';
 import { useToast } from '../common/ToastProvider';
 
@@ -47,7 +48,10 @@ export function CreateFolderDialog({ open, parentFolderId, onClose, onCreated }:
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="xs">
-      <DialogTitle>New folder</DialogTitle>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <CreateNewFolderOutlinedIcon color="primary" fontSize="small" />
+        New folder
+      </DialogTitle>
       <DialogContent>
         <TextField
           autoFocus

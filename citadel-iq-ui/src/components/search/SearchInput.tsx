@@ -1,4 +1,4 @@
-import { IconButton, InputAdornment, TextField } from '@mui/material';
+import { IconButton, InputAdornment, TextField, alpha } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
 
@@ -22,6 +22,20 @@ export function SearchInput({ value, onChange, onSearch, onClear, isLoading }: S
         if (e.key === 'Enter') {
           onSearch();
         }
+      }}
+      sx={{
+        '& .MuiOutlinedInput-root': {
+          borderRadius: '12px',
+          fontSize: 15,
+          backgroundColor: (t) => alpha(t.palette.text.primary, t.palette.mode === 'light' ? 0.04 : 0.08),
+          backdropFilter: 'blur(8px)',
+          '& fieldset': {
+            borderColor: (t) => alpha(t.palette.text.primary, 0.14),
+          },
+          '&:hover fieldset': {
+            borderColor: (t) => alpha(t.palette.primary.main, 0.5),
+          },
+        },
       }}
       slotProps={{
         input: {

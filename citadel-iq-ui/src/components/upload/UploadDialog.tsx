@@ -11,6 +11,7 @@ import {
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import UploadOutlinedIcon from '@mui/icons-material/UploadOutlined';
 import { UploadDropzone } from './UploadDropzone';
 import { useUpload } from '../../hooks/useUpload';
 import type { DocumentSummaryDto } from '../../types/folder';
@@ -32,7 +33,10 @@ export function UploadDialog({ open, folderId, onClose, onUploaded }: UploadDial
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
-      <DialogTitle>Upload documents</DialogTitle>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <UploadOutlinedIcon color="primary" fontSize="small" />
+        Upload documents
+      </DialogTitle>
       <DialogContent>
         <Stack spacing={2}>
           <UploadDropzone onFilesSelected={uploadFiles} />

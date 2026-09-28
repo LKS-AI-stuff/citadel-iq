@@ -1,13 +1,16 @@
-import { Paper, Stack, Typography } from '@mui/material';
+import { Stack, Tooltip, Typography } from '@mui/material';
 import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
-import { FileIcon } from './FileIcon';
-import { ProcessingStatusChip } from './ProcessingStatusChip';
+import { FileIcon, getFileAccentColor } from './FileIcon';
+import { ProcessingStatusIcon } from './ProcessingStatusIcon';
 import { CardActionsMenu } from '../common/CardActionsMenu';
+import { GlassSurface } from '../common/GlassSurface';
+import { IconBadge } from '../common/IconBadge';
 import { documentsApi } from '../../api/documentsApi';
 import type { DocumentSummaryDto } from '../../types/folder';
 
 interface FileCardProps {
   document: DocumentSummaryDto;
+  animationDelayMs?: number;
 }
 
 function formatSize(bytes: number): string {
@@ -16,38 +19,51 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileCard({ document }: FileCardProps) {
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+export function FileCard({ document, animationDelayMs = 0 }: FileCardProps) {
   const isReady = document.status === 'Ready';
+  const accentColor = getFileAccentColor(document.fileName);
 
   const handleDownload = () => {
     window.open(documentsApi.getDownloadUrl(document.id), '_blank');
   };
 
   return (
-    <Paper
-      variant="outlined"
+    <GlassSurface
+      hover={isReady}
+      radius={16}
       onClick={isReady ? handleDownload : undefined}
+      className="animate-fade-in-up"
       sx={{
         p: 2,
         display: 'flex',
         alignItems: 'center',
-        gap: 1.5,
+        gap: 1.75,
         opacity: isReady ? 1 : 0.85,
         cursor: isReady ? 'pointer' : 'default',
-        transition: 'border-color 0.15s ease, background-color 0.15s ease',
-        ...(isReady && { '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' } }),
+        animationDelay: `${animationDelayMs}ms`,
+        '&:hover .file-icon-badge': { transform: 'scale(1.08)' },
       }}
     >
-      <FileIcon fileName={document.fileName} sx={{ fontSize: 32 }} />
-      <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="body1" noWrap sx={{ fontWeight: 500 }}>
-          {document.fileName}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {formatSize(document.sizeBytes)}
-        </Typography>
+      <IconBadge className="file-icon-badge" color={accentColor}>
+        <FileIcon fileName={document.fileName} sx={{ fontSize: 24 }} />
+      </IconBadge>
+      <Stack sx={{ flex: 1, minWidth: 0 }}>
+        <Tooltip title={document.fileName}>
+          <Typography variant="body1" noWrap sx={{ fontWeight: 600 }}>
+            {document.fileName}
+          </Typography>
+        </Tooltip>
+        <Stack direction="row" sx={{ alignItems: 'center', gap: 0.6 }}>
+          <ProcessingStatusIcon status={document.status} failureReason={document.failureReason} />
+          <Typography variant="caption" color="text.secondary" noWrap>
+            {formatSize(document.sizeBytes)} · {formatDate(document.uploadedAtUtc)}
+          </Typography>
+        </Stack>
       </Stack>
-      <ProcessingStatusChip status={document.status} failureReason={document.failureReason} />
       <CardActionsMenu
         actions={[
           {
@@ -59,6 +75,6 @@ export function FileCard({ document }: FileCardProps) {
           },
         ]}
       />
-    </Paper>
+    </GlassSurface>
   );
 }

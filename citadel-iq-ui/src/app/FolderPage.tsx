@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Alert, Box, Button, Stack } from '@mui/material';
+import { Alert, Box, Button, Divider, Stack, alpha } from '@mui/material';
 import CreateNewFolderOutlinedIcon from '@mui/icons-material/CreateNewFolderOutlined';
 import UploadOutlinedIcon from '@mui/icons-material/UploadOutlined';
+import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
+import FolderIcon from '@mui/icons-material/Folder';
 import { useFolderContents } from '../hooks/useFolderContents';
 import { Breadcrumbs } from '../components/folders/Breadcrumbs';
 import { FolderCard } from '../components/folders/FolderCard';
@@ -11,6 +13,8 @@ import { FileCard } from '../components/documents/FileCard';
 import { UploadDialog } from '../components/upload/UploadDialog';
 import { EmptyState } from '../components/common/EmptyState';
 import { LoadingState } from '../components/common/LoadingState';
+import { GlassSurface } from '../components/common/GlassSurface';
+import { SectionHeader } from '../components/common/SectionHeader';
 import { useToast } from '../components/common/ToastProvider';
 import { ROOT_FOLDER_ID } from '../constants';
 import type { ProcessingStatus } from '../types/folder';
@@ -84,28 +88,66 @@ export function FolderPage() {
             New folder
           </Button>
           <Button variant="contained" startIcon={<UploadOutlinedIcon />} onClick={() => setUploadOpen(true)}>
-            Upload
+            Upload Document
           </Button>
         </Stack>
       </Stack>
 
-      {isLoading || !contents ? (
-        <LoadingState />
-      ) : contents.subfolders.length === 0 && contents.documents.length === 0 ? (
-        <EmptyState
-          title="This folder is empty"
-          description="Create a folder or upload a document to get started."
-        />
-      ) : (
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 2 }}>
-          {contents.subfolders.map((folder) => (
-            <FolderCard key={folder.id} folder={folder} onOpen={goToFolder} />
-          ))}
-          {contents.documents.map((document) => (
-            <FileCard key={document.id} document={document} />
-          ))}
-        </Box>
-      )}
+        {isLoading || !contents ? (
+          <GlassSurface sx={{ p: { xs: 2, sm: 3 } }}>
+            <LoadingState />
+          </GlassSurface>
+        ) : (
+          <GlassSurface component="section" sx={{ p: { xs: 2, sm: 3 } }}>
+            <Box component="section">
+              <SectionHeader
+                icon={<InsertDriveFileOutlinedIcon sx={{ color: '#4f46e5', fontSize: 20 }} />}
+                color="#4f46e5"
+                title="Documents"
+                count={contents.documents.length}
+              />
+              {contents.documents.length === 0 ? (
+                <EmptyState
+                  dense
+                  title="No documents in this folder yet"
+                  description="Upload a PDF, DOCX, TXT, CSV, or XLSX file to make it searchable."
+                  icon={<InsertDriveFileOutlinedIcon sx={{ fontSize: 22, color: 'primary.main' }} />}
+                />
+              ) : (
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 2 }}>
+                  {contents.documents.map((document, index) => (
+                    <FileCard key={document.id} document={document} animationDelayMs={index * 35} />
+                  ))}
+                </Box>
+              )}
+            </Box>
+
+            <Divider sx={{ my: { xs: 2.5, sm: 3 }, borderColor: (t) => alpha(t.palette.text.primary, 0.1) }} />
+
+            <Box component="section">
+              <SectionHeader
+                icon={<FolderIcon sx={{ color: '#4f46e5', fontSize: 20 }} />}
+                color="#4f46e5"
+                title="Subfolders"
+                count={contents.subfolders.length}
+              />
+              {contents.subfolders.length === 0 ? (
+                <EmptyState
+                  dense
+                  title="No subfolders yet"
+                  description="Create a folder to organize documents by topic, department, or year."
+                  icon={<FolderIcon sx={{ fontSize: 22, color: 'primary.main' }} />}
+                />
+              ) : (
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 2 }}>
+                  {contents.subfolders.map((folder, index) => (
+                    <FolderCard key={folder.id} folder={folder} onOpen={goToFolder} animationDelayMs={index * 35} />
+                  ))}
+                </Box>
+              )}
+            </Box>
+          </GlassSurface>
+        )}
 
       <CreateFolderDialog
         open={isCreateFolderOpen}
