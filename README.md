@@ -28,7 +28,7 @@ citadel-iq/
 ├── CitadelIQ.Api/               # ASP.NET Core Web API — controllers, DI, config, middleware
 │   └── App_Data/documents/      # Uploaded file bytes (gitignored, created at runtime)
 ├── citadel-iq-ui/               # React + TypeScript + Vite frontend
-├── PLAN.md                      # Design document — decisions, rationale, architecture, roadmap
+├── .claude/technical-designs/design.md  # Design document — decisions, rationale, architecture, roadmap
 ├── CLAUDE.md                    # Developer/AI-agent guide to the codebase
 └── Requirements.pages           # Original requirements document
 ```
@@ -162,8 +162,8 @@ Upload triggers an in-process, fire-and-forget processing pipeline (extract → 
 store) so the upload request returns immediately; the UI polls for status until the document is
 `Ready` or `Failed`. Search embeds the query once, then computes cosine similarity against every
 eligible chunk's stored embedding entirely in-app — no vector database yet (see
-[PLAN.md](./PLAN.md) for the full roadmap: PostgreSQL + pgvector, authentication, and RAG are all
-designed for, but intentionally not built in this version).
+[design.md](./.claude/technical-designs/design.md) for the full roadmap: PostgreSQL + pgvector,
+authentication, and RAG are all designed for, but intentionally not built in this version).
 
 ## 🔐 Security notes
 
@@ -177,5 +177,5 @@ designed for, but intentionally not built in this version).
 
 ## 📖 Further reading
 
-- **[PLAN.md](./PLAN.md)** — the design document: decisions made, rationale, and the full roadmap
+- **[design.md](./.claude/technical-designs/design.md)** — the design document: decisions made, rationale, and the full roadmap
 - **[CLAUDE.md](./CLAUDE.md)** — architecture deep-dive and development guide

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 enterprise-style application, not a chatbot. Users organize documents into folders, upload files,
 and run natural-language searches that return the most relevant document chunks ranked by cosine
 similarity against OpenAI embeddings. There is no AI-generated answer yet; this version stops at
-"vector search → ranked results" by design (see [PLAN.md](./PLAN.md) §1, §6, §11, §20 for the
+"vector search → ranked results" by design (see [design.md](./.claude/technical-designs/design.md) §1, §6, §11, §20 for the
 full rationale and the documented future RAG phase).
 
 It's a monorepo with two components:
@@ -16,7 +16,7 @@ It's a monorepo with two components:
 - **Backend**: ASP.NET Core Web API (.NET 10), Clean Architecture, C#
 - **Frontend**: React 19 + TypeScript + Vite, Material UI + Tailwind CSS
 
-The authoritative design document is [PLAN.md](./PLAN.md) — read it before making architectural
+The authoritative design document is [design.md](./.claude/technical-designs/design.md) — read it before making architectural
 changes. It records the decisions made during planning (in-memory storage now, EF Core/Postgres
 deferred; disk-based raw file storage; fire-and-forget processing instead of a job queue) along
 with the reasoning, so a change that looks like an obvious improvement may already be a
@@ -67,11 +67,11 @@ dependencies (no OpenAI SDK, no ASP.NET, no disk I/O). Key pieces:
 **Infrastructure** (`CitadelIQ.Infrastructure/`): the only layer allowed to depend on OpenAI, the
 filesystem, or a specific persistence mechanism.
 - `Persistence/InMemory*Repository` — `ConcurrentDictionary`-backed, singleton, global (not
-  per-session — see PLAN.md §3 for why). Swapping these for Postgres/EF Core later is an
+  per-session — see .claude/technical-designs/design.md §3 for why). Swapping these for Postgres/EF Core later is an
   Infrastructure-only change.
 - `Storage/LocalDiskDocumentStorage` — raw file bytes go to `App_Data/documents/` (configurable
   via `Storage:DocumentsPath`), **not** `bin/` (which `dotnet build`/`clean` wipes) and **not**
-  RAM (see PLAN.md §3 for the reasoning: keeps memory pressure off large uploads).
+  RAM (see .claude/technical-designs/design.md §3 for the reasoning: keeps memory pressure off large uploads).
 - `TextExtraction/` — `PdfTextExtractor` (PdfPig), `DocxTextExtractor` (DocumentFormat.OpenXml),
   `XlsxTextExtractor` (ClosedXML), `PlainTextExtractor` (.txt/.csv), resolved by
   `TextExtractionService` via `IEnumerable<ITextExtractor>` + `CanHandle(extension)`.
@@ -91,7 +91,7 @@ exception types, or configuration.
 ### Upload & processing pipeline
 
 Upload is a two-phase, fire-and-forget flow, **not** a real background job queue (that's
-explicitly out of scope for this version — see PLAN.md §9):
+explicitly out of scope for this version — see .claude/technical-designs/design.md §9):
 
 1. `POST /api/documents/upload` validates the file, saves raw bytes to disk, records the
    `Document` (status `Uploaded`), and calls `IDocumentProcessingDispatcher.Dispatch(documentId)`
@@ -326,7 +326,7 @@ converter registered in `Program.cs`), e.g. `"searchScope": "CurrentFolderAndSub
 Authentication/authorization, per-user document spaces, PostgreSQL/pgvector, EF Core/FluentMigrator,
 RAG/LLM-generated answers, search history/pagination, hybrid keyword search, file rename, move,
 bulk operations, document previews, audit logging, background job queues (the current dispatcher
-is in-process fire-and-forget, not a persistent queue). See [PLAN.md](./PLAN.md) §9 and §21 for the
+is in-process fire-and-forget, not a persistent queue). See [design.md](./.claude/technical-designs/design.md) §9 and §21 for the
 full future-enhancements list and the reasoning behind each deferral. (Folder *rename* and
 *deletion* — including cascade delete of a folder's subtree — are in scope; see the API contract
 above.)
