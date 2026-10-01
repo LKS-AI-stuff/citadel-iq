@@ -2,5 +2,6 @@
   <Project Path="CitadelIQ.Api/CitadelIQ.Api.csproj" />
   <Project Path="CitadelIQ.Application/CitadelIQ.Application.csproj" />
   <Project Path="CitadelIQ.Domain/CitadelIQ.Domain.csproj" />
+  <Project Path="CitadelIQ.FluentMigrations/CitadelIQ.FluentMigrations.csproj" />
   <Project Path="CitadelIQ.Infrastructure/CitadelIQ.Infrastructure.csproj" />
 </Solution>

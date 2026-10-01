@@ -1,5 +1,7 @@
+// OBSOLETE: Replaced by pgvector cosine distance (the <=> operator) in VectorSearchRepository; similarity = 1 - distance. Kept for reference only; not used by SearchService.
 namespace CitadelIQ.Application.Search;
 
+[Obsolete("Replaced by pgvector cosine distance (the <=> operator) in VectorSearchRepository; similarity = 1 - distance. Kept for reference only; not used by SearchService.")]
 public static class CosineSimilarity
 {
     public static double Compute(float[] a, float[] b)

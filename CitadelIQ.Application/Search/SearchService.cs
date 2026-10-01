@@ -3,20 +3,19 @@ using CitadelIQ.Application.Dtos;
 using CitadelIQ.Application.Folders;
 using CitadelIQ.Application.Interfaces;
 using CitadelIQ.Application.Options;
-using CitadelIQ.Domain.Entities;
 using CitadelIQ.Domain.Enums;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace CitadelIQ.Application.Search;
 
 public class SearchService(
     IFolderRepository folderRepository,
-    IDocumentRepository documentRepository,
-    IDocumentChunkRepository chunkRepository,
-    IEmbeddingRepository embeddingRepository,
+    IVectorSearchRepository vectorSearchRepository,
     IOpenAIEmbeddingService embeddingService,
     FolderPathBuilder folderPathBuilder,
-    IOptions<SearchOptions> searchOptions) : ISearchService
+    IOptions<SearchOptions> searchOptions,
+    ILogger<SearchService> logger) : ISearchService
 {
     public async Task<IReadOnlyList<SearchResultDto>> SearchAsync(SearchRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -28,71 +27,55 @@ public class SearchService(
         _ = await folderRepository.GetByIdAsync(request.CurrentFolderId, cancellationToken)
             ?? throw new NotFoundException("Folder not found.");
 
-        var eligibleDocuments = await GetEligibleDocumentsAsync(request, cancellationToken);
-        var readyDocuments = eligibleDocuments.Where(d => d.Status == ProcessingStatus.Ready).ToList();
+        // Scope resolution (including walking the folder tree) stays here; the repository only
+        // receives the resolved folder-id filter.
+        var eligibleFolderIds = await ResolveEligibleFolderIdsAsync(request, cancellationToken);
+        var topK = ResolveTopK(request.TopK);
 
-        if (readyDocuments.Count == 0)
-        {
-            return [];
-        }
-
-        var documentsById = readyDocuments.ToDictionary(d => d.Id);
-        var chunks = await chunkRepository.GetByDocumentIdsAsync(documentsById.Keys, cancellationToken);
-
-        if (chunks.Count == 0)
-        {
-            return [];
-        }
-
-        var embeddings = await embeddingRepository.GetByChunkIdsAsync(chunks.Select(c => c.Id).ToList(), cancellationToken);
-        var embeddingByChunkId = embeddings.ToDictionary(e => e.ChunkId);
+        logger.LogInformation("Vector search started (scope {Scope}, topK {TopK})", request.SearchScope, topK);
 
         var queryEmbedding = await embeddingService.GenerateEmbeddingAsync(request.Query, cancellationToken);
+        var matches = await vectorSearchRepository.SearchAsync(queryEmbedding, eligibleFolderIds, topK, cancellationToken);
 
-        var scored = chunks
-            .Where(chunk => embeddingByChunkId.ContainsKey(chunk.Id))
-            .Select(chunk => (Chunk: chunk, Score: CosineSimilarity.Compute(queryEmbedding, embeddingByChunkId[chunk.Id].Vector)))
-            .OrderByDescending(x => x.Score)
-            .Take(ResolveTopK(request.TopK))
-            .ToList();
+        logger.LogInformation("Vector search completed with {ResultCount} results", matches.Count);
 
         var folderPathCache = new Dictionary<Guid, string>();
-        var results = new List<SearchResultDto>(scored.Count);
+        var results = new List<SearchResultDto>(matches.Count);
 
-        foreach (var (chunk, score) in scored)
+        foreach (var match in matches)
         {
-            var document = documentsById[chunk.DocumentId];
-            var folderPathDisplay = await GetFolderPathDisplayAsync(document.FolderId, folderPathCache, cancellationToken);
+            var folderPathDisplay = await GetFolderPathDisplayAsync(match.FolderId, folderPathCache, cancellationToken);
 
             results.Add(new SearchResultDto(
-                document.Id,
-                document.FileName,
+                match.DocumentId,
+                match.FileName,
                 folderPathDisplay,
-                document.ContentType,
-                chunk.Text,
-                chunk.ChunkIndex,
-                chunk.PageNumber,
-                score));
+                match.ContentType,
+                match.ChunkText,
+                match.ChunkIndex,
+                match.PageNumber,
+                match.SimilarityScore));
         }
 
         return results;
     }
 
-    private async Task<IReadOnlyList<Document>> GetEligibleDocumentsAsync(SearchRequestDto request, CancellationToken cancellationToken)
+    /// <summary>Returns the folder ids to restrict the search to, or <c>null</c> for the entire portal.</summary>
+    private async Task<IReadOnlyCollection<Guid>?> ResolveEligibleFolderIdsAsync(SearchRequestDto request, CancellationToken cancellationToken)
     {
         switch (request.SearchScope)
         {
             case SearchScope.EntirePortal:
-                return await documentRepository.GetAllAsync(cancellationToken);
+                return null;
 
             case SearchScope.CurrentFolder:
-                return await documentRepository.GetByFolderIdsAsync([request.CurrentFolderId], cancellationToken);
+                return [request.CurrentFolderId];
 
             case SearchScope.CurrentFolderAndSubfolders:
                 var descendantIds = await folderRepository.GetDescendantIdsAsync(request.CurrentFolderId, cancellationToken);
                 var folderIds = new List<Guid> { request.CurrentFolderId };
                 folderIds.AddRange(descendantIds);
-                return await documentRepository.GetByFolderIdsAsync(folderIds, cancellationToken);
+                return folderIds;
 
             default:
                 throw new ValidationException("Unrecognized search scope.");

@@ -1,0 +1,53 @@
+# Deployment stack: PostgreSQL+pgvector, API, UI. Copy .env.example to .env and fill it in.
+#   docker compose up -d --build
+# For local development you don't need this — run the API/UI directly against Postgres.app.
+services:
+  db:
+    image: pgvector/pgvector:pg17   # keep pinned: a major-version bump won't start on an existing volume
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: citadeliq
+      POSTGRES_USER: citadeliq
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U citadeliq -d citadeliq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # No published port: only reachable from the api container.
+
+  api:
+    build:
+      context: .
+      dockerfile: CitadelIQ.Api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__CitadelIQ: Host=db;Port=5432;Database=citadeliq;Username=citadeliq;Password=${POSTGRES_PASSWORD}
+      OpenAI__ApiKey: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+      OpenAI__EmbeddingModel: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      Cors__AllowedOrigins__0: ${UI_ORIGIN:-http://localhost:8080}
+      Database__MigrateOnStartup: "true"
+    volumes:
+      - documents:/app/App_Data/documents
+    ports:
+      - "${API_PORT:-5157}:8080"
+
+  ui:
+    build:
+      context: ./citadel-iq-ui
+      args:
+        VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:5157}
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${UI_PORT:-8080}:80"
+
+volumes:
+  pgdata:
+  documents:

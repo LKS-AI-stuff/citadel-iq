@@ -6,7 +6,6 @@ public interface IDocumentChunkRepository
 {
     Task AddRangeAsync(IReadOnlyCollection<DocumentChunk> chunks, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<DocumentChunk>> GetByDocumentIdsAsync(IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken = default);
-
+    /// <summary>Deletes the chunks (and the embeddings stored on them) of the given documents.</summary>
     Task DeleteByDocumentIdsAsync(IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken = default);
 }

@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using CitadelIQ.Api.Middleware;
 using CitadelIQ.Application;
 using CitadelIQ.Application.Options;
+using CitadelIQ.FluentMigrations;
 using CitadelIQ.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,7 +29,16 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddApplication();
-builder.Services.AddInfrastructure();
+builder.Services.AddInfrastructure(builder.Configuration);
+var connectionString = builder.Configuration.GetConnectionString("CitadelIQ");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "Connection string 'ConnectionStrings:CitadelIQ' is not configured. " +
+        "Set it via dotnet user-secrets or the ConnectionStrings__CitadelIQ environment variable.");
+}
+
+builder.Services.AddFluentMigrations(connectionString);
 
 var app = builder.Build();
 
@@ -37,6 +47,13 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+}
+
+// Enabled in appsettings.Development.json; in deployed environments set Database__MigrateOnStartup=true
+// (e.g. in docker-compose) or run the migrations as a separate step.
+if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
+{
+    app.Services.ApplyDatabaseMigrations();
 }
 
 app.UseHttpsRedirection();

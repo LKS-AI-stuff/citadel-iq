@@ -1,3 +1,4 @@
+// OBSOLETE: Replaced by DocumentRepository (PostgreSQL + pgvector via EF Core). Kept for reference only; not registered in DI.
 using System.Collections.Concurrent;
 using CitadelIQ.Application.Interfaces;
 using CitadelIQ.Domain.Entities;
@@ -8,6 +9,7 @@ namespace CitadelIQ.Infrastructure.Persistence;
 /// Global, app-wide in-memory document metadata store. Thread-safe singleton; replace with a
 /// database-backed implementation later without touching the Application layer.
 /// </summary>
+[Obsolete("Replaced by DocumentRepository (PostgreSQL + pgvector via EF Core). Kept for reference only; not registered in DI.")]
 public class InMemoryDocumentRepository : IDocumentRepository
 {
     private readonly ConcurrentDictionary<Guid, Document> _documents = new();

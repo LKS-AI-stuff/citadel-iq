@@ -1,7 +1,7 @@
 # CitadelIQ
 
 An AI-powered document management and semantic search portal — built to demonstrate the
-embeddings → chunking → cosine-similarity pipeline behind semantic search, wrapped in a
+embeddings → chunking → vector-similarity pipeline behind semantic search, wrapped in a
 professional, enterprise-style UI. This is deliberately **not** a chatbot: there's no AI-generated
 answer yet, just ranked, relevant document chunks returned for a natural-language query.
 
@@ -16,7 +16,7 @@ is found by searching:
 
 > "How many vacation days can an employee take?"
 
-because the search matches on **meaning** (via OpenAI embeddings + cosine similarity), not keywords.
+because the search matches on **meaning** (via OpenAI embeddings + pgvector cosine similarity), not keywords.
 
 ## 📁 Repository structure
 
@@ -24,7 +24,8 @@ because the search matches on **meaning** (via OpenAI embeddings + cosine simila
 citadel-iq/
 ├── CitadelIQ.Domain/            # Entities, enums, domain rules — no external dependencies
 ├── CitadelIQ.Application/       # Use cases, interfaces, DTOs, AutoMapper profile
-├── CitadelIQ.Infrastructure/    # In-memory repos, local-disk storage, OpenAI SDK, text extraction
+├── CitadelIQ.Infrastructure/    # EF Core + PostgreSQL/pgvector repos, local-disk storage, OpenAI SDK, text extraction
+├── CitadelIQ.FluentMigrations/  # FluentMigrator schema migrations (owns the database schema)
 ├── CitadelIQ.Api/               # ASP.NET Core Web API — controllers, DI, config, middleware
 │   └── App_Data/documents/      # Uploaded file bytes (gitignored, created at runtime)
 ├── citadel-iq-ui/               # React + TypeScript + Vite frontend
@@ -39,9 +40,115 @@ citadel-iq/
 
 - **.NET 10 SDK**
 - **Node.js** 18+
+- **Docker Desktop** (to run PostgreSQL with the pgvector extension locally)
 - **OpenAI API key** (get one from [platform.openai.com](https://platform.openai.com))
 
-### 1. Backend setup
+### 1. Database setup (PostgreSQL + pgvector)
+
+Run Postgres in Docker using the `pgvector/pgvector` image. Choose a password and use it in place of `<pw>`
+(no angle brackets, and avoid `$`, spaces and quotes):
+
+```bash
+docker run -d --name citadeliq-pg \
+  -e POSTGRES_PASSWORD=<pw> -e POSTGRES_DB=citadeliq \
+  -p 5432:5432 \
+  -v citadeliq-pgdata:/var/lib/postgresql/data \
+  pgvector/pgvector:pg17
+```
+
+The `-v` named volume keeps your data when the container is stopped, restarted or recreated. If port 5432 is
+already in use, map another one (e.g. `-p 5433:5432`) and use that port in the connection string.
+
+Day-to-day container commands:
+
+```bash
+docker ps                       # check it's running
+docker stop citadeliq-pg        # stop (data is kept)
+docker start citadeliq-pg       # start again
+```
+
+Set the connection string (stored via user-secrets, never committed — `appsettings.json` has an empty value):
+
+```bash
+cd CitadelIQ.Api
+dotnet user-secrets set "ConnectionStrings:CitadelIQ" "Host=localhost;Port=5432;Database=citadeliq;Username=postgres;Password=<pw>"
+```
+
+The schema (tables, pgvector column, indexes, root "Home" folder) is created automatically by the
+FluentMigrator migrations when the API starts in Development.
+
+#### Querying the data with psql
+
+`psql` ships inside the Postgres container, so nothing extra needs installing. Open an interactive session:
+
+```bash
+docker exec -it citadeliq-pg psql -U postgres -d citadeliq
+```
+
+The prompt changes to `citadeliq=#`. Type SQL and end every statement with `;`. If the prompt becomes
+`citadeliq-#`, `psql` is still waiting for a `;` — finish the statement, or type `\r` to discard it.
+
+Useful `psql` commands (no `;` needed):
+
+```text
+\dt                 list tables
+\d "Documents"      show a table's columns, indexes and foreign keys
+\x                  toggle expanded (one field per line) output — handy for wide rows
+\q                  quit
+```
+
+Example queries:
+
+```sql
+SELECT * FROM "Folders";                    -- includes the seeded "Home" root folder
+SELECT "FileName", "ProcessingStatus", "FailureReason" FROM "Documents";
+SELECT "ChunkIndex", left("Text", 60) AS text, "ModelName", "Embedding" IS NOT NULL AS has_embedding
+FROM "DocumentChunks";
+SELECT * FROM "VersionInfo";                -- applied FluentMigrator migrations
+```
+
+Run a single query without opening a session:
+
+```bash
+docker exec -it citadeliq-pg psql -U postgres -d citadeliq -c 'SELECT "FileName", "ProcessingStatus" FROM "Documents";'
+```
+
+Notes:
+- Table and column names are case-sensitive, so keep the double quotes (`"Documents"`, not `Documents`).
+- Avoid `SELECT *` on `"DocumentChunks"` — the embedding column prints 1536 numbers per row.
+- If `psql` can't find the container, check it's running with `docker ps` (start it with `docker start citadeliq-pg`).
+- Prefer a GUI? TablePlus, DBeaver or pgAdmin can connect to `localhost:5432` (database `citadeliq`, user `postgres`, your `<pw>`).
+
+#### Resetting local data
+
+Uploaded files and database rows are stored separately, so clear both.
+
+**Wipe the database completely** (removes the container and its volume; the next `dotnet run` recreates the schema):
+
+```bash
+docker rm -f citadeliq-pg
+docker volume rm citadeliq-pgdata
+# then re-run the `docker run ...` command above
+```
+
+**Keep the container, delete only the rows** (keeps the schema and the root "Home" folder — don't truncate
+`Folders` or `VersionInfo`):
+
+```bash
+docker exec -it citadeliq-pg psql -U postgres -d citadeliq
+```
+```sql
+TRUNCATE "DocumentChunks", "Documents";
+DELETE FROM "Folders" WHERE "Id" <> '00000000-0000-0000-0000-000000000000';
+```
+
+**Delete the uploaded files:**
+
+```bash
+rm -rf CitadelIQ.Api/App_Data/documents/*
+```
+
+### 2. Backend setup
 
 ```bash
 cd CitadelIQ.Api
@@ -56,7 +163,7 @@ dotnet run
 
 The API starts on `http://localhost:5157`.
 
-### 2. Frontend setup
+### 3. Frontend setup
 
 ```bash
 cd citadel-iq-ui
@@ -67,7 +174,7 @@ npm run dev
 
 The UI opens at `http://localhost:5173`.
 
-### 3. Try it out
+### 4. Try it out
 
 1. Open `http://localhost:5173` — you'll land on an empty **Home**.
 2. Click **New folder** to create a folder (there's no seed data — you build the structure yourself).
@@ -85,7 +192,9 @@ The UI opens at `http://localhost:5173`.
 
 | Section | Key | Default | Notes |
 |---|---|---|---|
-| `OpenAI` | `EmbeddingModel` | `text-embedding-3-small` | In `appsettings.json` |
+| `ConnectionStrings` | `CitadelIQ` | — (empty) | **User-secrets / env var only** — PostgreSQL connection string |
+| `OpenAI` | `EmbeddingModel` | `text-embedding-3-small` | Set via user-secrets |
+| `OpenAI` | `EmbeddingDimension` | `1536` | Must match the model; the migration hardcodes `vector(1536)` |
 | `OpenAI` | `ApiKey` | — | **User-secrets only**, never in `appsettings.json` |
 | `Upload` | `MaxFileSizeMB` / `AllowedExtensions` | `20` / pdf, docx, txt, csv, xlsx | Configurable allow-list |
 | `Chunking` | `ChunkSize` / `ChunkOverlap` | `400` / `80` | Characters |
@@ -98,6 +207,7 @@ See [CLAUDE.md](./CLAUDE.md) for the full configuration reference and architectu
 
 **Backend**
 - ASP.NET Core Web API (.NET 10) — Clean Architecture (Domain / Application / Infrastructure / Api)
+- PostgreSQL + pgvector — EF Core for queries, FluentMigrator for schema migrations
 - Official OpenAI .NET SDK — `text-embedding-3-small`
 - AutoMapper — entity → DTO mapping
 - PdfPig, DocumentFormat.OpenXml, ClosedXML — text extraction (PDF, DOCX, XLSX)
@@ -150,20 +260,20 @@ React Frontend (localhost:5173)
     ↓ HTTP
 ASP.NET Core API (localhost:5157)
     ↓                              ↓
-In-memory stores            Local disk (App_Data/)
+PostgreSQL + pgvector       Local disk (App_Data/)
 (folders, docs, chunks,     (raw uploaded file bytes)
- embeddings — lost on
- restart)
+ embeddings)
     ↓
 OpenAI Embeddings API
 ```
 
 Upload triggers an in-process, fire-and-forget processing pipeline (extract → chunk → embed →
 store) so the upload request returns immediately; the UI polls for status until the document is
-`Ready` or `Failed`. Search embeds the query once, then computes cosine similarity against every
-eligible chunk's stored embedding entirely in-app — no vector database yet (see
-[design.md](./.claude/technical-designs/design.md) for the full roadmap: PostgreSQL + pgvector,
-authentication, and RAG are all designed for, but intentionally not built in this version).
+`Ready` or `Failed`. Search embeds the query once, then PostgreSQL + pgvector ranks the eligible chunks
+by cosine distance in SQL and returns the top-K (see
+[design.md](./.claude/technical-designs/design.md) and
+[postgresql-pgvector.md](./.claude/technical-designs/postgresql-pgvector.md); authentication and RAG are
+designed for, but intentionally not built in this version).
 
 ## 🔐 Security notes
 

@@ -5,20 +5,35 @@ using CitadelIQ.Infrastructure.Processing;
 using CitadelIQ.Infrastructure.Storage;
 using CitadelIQ.Infrastructure.TextExtraction;
 using CitadelIQ.Infrastructure.Validation;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CitadelIQ.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services)
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        // Global, app-wide in-memory stores (singletons) — see PLAN.md §3 for the rationale and
-        // the future swap-in path (Postgres/pgvector) behind these same interfaces.
-        services.AddSingleton<IFolderRepository, InMemoryFolderRepository>();
-        services.AddSingleton<IDocumentRepository, InMemoryDocumentRepository>();
-        services.AddSingleton<IDocumentChunkRepository, InMemoryDocumentChunkRepository>();
-        services.AddSingleton<IEmbeddingRepository, InMemoryEmbeddingRepository>();
+        // PostgreSQL + pgvector via EF Core. DbContext and repositories are scoped: every request —
+        // and every background processing task, which gets its own DI scope — gets its own DbContext
+        // (DbContext is not thread-safe).
+        var connectionString = configuration.GetConnectionString("CitadelIQ");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "Connection string 'ConnectionStrings:CitadelIQ' is not configured. " +
+                "Set it via dotnet user-secrets or an environment variable.");
+        }
+
+        services.AddDbContext<CitadelIQDbContext>(options =>
+            options.UseNpgsql(connectionString, npgsql => npgsql.UseVector()));
+
+        services.AddScoped<IFolderRepository, FolderRepository>();
+        services.AddScoped<IDocumentRepository, DocumentRepository>();
+        services.AddScoped<IDocumentChunkRepository, DocumentChunkRepository>();
+        services.AddScoped<IEmbeddingRepository, EmbeddingRepository>();
+        services.AddScoped<IVectorSearchRepository, VectorSearchRepository>();
 
         // Raw file bytes on local disk (App_Data/), not RAM and not bin/ — see PLAN.md §3.
         services.AddSingleton<IDocumentStorage, LocalDiskDocumentStorage>();

@@ -7,9 +7,10 @@ namespace CitadelIQ.Infrastructure.Processing;
 
 /// <summary>
 /// Runs the document-processing pipeline on a background Task, in a fresh DI scope (the HTTP
-/// request's scope is disposed once the upload response is sent). In-process only — not a
-/// persistent queue; processing is lost on restart, consistent with the rest of the in-memory
-/// storage story. See PLAN.md.
+/// request's scope is disposed once the upload response is sent). The new scope resolves its own
+/// scoped DbContext, so the background task never shares a (non-thread-safe) DbContext with the
+/// request. In-process only — not a persistent queue; a document still being processed when the
+/// app stops stays in its in-progress status.
 /// </summary>
 public class BackgroundDocumentProcessingDispatcher(
     IServiceScopeFactory scopeFactory,

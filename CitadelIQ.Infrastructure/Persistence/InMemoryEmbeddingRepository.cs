@@ -1,9 +1,11 @@
+// OBSOLETE: Replaced by EmbeddingRepository (PostgreSQL + pgvector via EF Core). Kept for reference only; not registered in DI.
 using System.Collections.Concurrent;
 using CitadelIQ.Application.Interfaces;
 using CitadelIQ.Domain.Entities;
 
 namespace CitadelIQ.Infrastructure.Persistence;
 
+[Obsolete("Replaced by EmbeddingRepository (PostgreSQL + pgvector via EF Core). Kept for reference only; not registered in DI.")]
 public class InMemoryEmbeddingRepository : IEmbeddingRepository
 {
     private readonly ConcurrentDictionary<Guid, DocumentEmbedding> _embeddings = new();

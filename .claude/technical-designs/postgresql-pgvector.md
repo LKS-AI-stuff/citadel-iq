@@ -37,7 +37,9 @@ Replace the temporary in-memory persistence layer with:
 
 -   PostgreSQL for durable metadata and document/chunk storage.
 -   `pgvector` for vector storage and similarity search.
--   EF Core for relational persistence.
+-   EF Core for querying and writing (the ORM), and **FluentMigrator, in a separate
+    `CitadelIQ.FluentMigrations` project, for owning and versioning the schema** (EF Core migrations
+    are deliberately *not* used).
 -   A clean abstraction so the application is not tightly coupled to
     PostgreSQL.
 
@@ -357,7 +359,11 @@ CreatedAt
     vector search query needs the embedding on the exact row being ranked — a join per query row
     adds cost for no benefit. The two repository interfaces can both be implemented against the
     same physical `DocumentChunks` table; that split is an Infrastructure detail the Application
-    layer never needs to know about.
+    layer never needs to know about. **As implemented:** the vector and model name are EF *shadow
+    properties* (`Embedding`, `ModelName`) on `DocumentChunk`, not fields on the domain entity, and
+    `EmbeddingRepository` attaches them to already-inserted chunks in a single `SaveChanges`. The
+    column is nullable because chunks are inserted first; a document only becomes `Ready` (and
+    searchable) after embeddings are stored, and a failed document's chunks are deleted.
 
 Example:
 
@@ -414,14 +420,19 @@ string or comma-separated text.
 
 Claude Code should:
 
-1.  Add the PostgreSQL EF Core provider.
-2.  Add the pgvector EF Core integration/package appropriate for the
-    project's current .NET version.
-3.  Configure the PostgreSQL connection string.
-4.  Enable the pgvector extension through EF Core migration/setup.
-5.  Configure the embedding property as a PostgreSQL vector.
-6.  Create the initial migration.
-7.  Apply the migration to the local PostgreSQL database.
+1.  Add the PostgreSQL EF Core provider (`Npgsql.EntityFrameworkCore.PostgreSQL`) and the pgvector EF
+    Core integration (`Pgvector.EntityFrameworkCore`) to Infrastructure. Pin
+    `Microsoft.EntityFrameworkCore`/`.Relational` explicitly to the same version as the provider —
+    Pgvector otherwise drags in an older EF Core and causes assembly-version conflicts.
+2.  Create the `CitadelIQ.FluentMigrations` project (FluentMigrator + `FluentMigrator.Runner` +
+    `FluentMigrator.Runner.Postgres`, no project dependencies) and reference it from `CitadelIQ.Api`.
+3.  Configure the PostgreSQL connection string (`ConnectionStrings:CitadelIQ`, password via user-secrets).
+4.  Enable the pgvector extension in the first FluentMigrator migration
+    (`CREATE EXTENSION IF NOT EXISTS vector`).
+5.  Configure the embedding property in EF Core as a PostgreSQL vector (`UseVector()` +
+    `HasColumnType("vector(N)")`) — mapping only; the DDL comes from the migration.
+6.  Write the initial FluentMigrator migration.
+7.  Apply migrations at startup (Development) via the migration runner.
 
 Before changing package versions, inspect the existing `.csproj` files
 and target framework.
@@ -465,6 +476,10 @@ Avoid putting PostgreSQL-specific configuration into Domain entities.
 ------------------------------------------------------------------------
 
 # 12. EF Core Configuration
+
+These configurations only *describe* the schema to EF Core for querying. The schema itself
+(tables, FKs, indexes, seed data) is created by `CitadelIQ.FluentMigrations` (§20) — keep the two in
+sync when either changes.
 
 Create separate entity configurations where practical:
 
@@ -541,6 +556,15 @@ This also means the `Ready`-only filter (`ProcessingStatus.Ready`, already appli
 computing similarity) and the `MaxTopK` clamp both belong in the SQL query this interface executes
 — not applied to results afterward in C# — otherwise the DB does the expensive ranking work over
 rows that get thrown away anyway.
+
+**As implemented:** `eligibleFolderIds` is nullable (`IReadOnlyCollection<Guid>?`) — `null` means no
+folder filter (Entire Portal), which avoids materialising every folder id. `DocumentSearchResult`
+carries the chunk and document fields the search DTO needs (chunk/document/folder ids, file name,
+content type, chunk text/index, page number, `SimilarityScore` = 1 − cosine distance); `SearchService`
+adds the folder-path display. Repository interfaces that became unused were removed
+(`IDocumentRepository.GetAllAsync`, `IDocumentChunkRepository.GetByDocumentIdsAsync`,
+`IEmbeddingRepository.GetByChunkIdsAsync`/`DeleteByChunkIdsAsync`); embeddings are deleted with their
+chunks.
 
 The exact signatures may be adapted to the existing CitadelIQ code.
 
@@ -758,29 +782,42 @@ Do not optimize prematurely.
 
 ------------------------------------------------------------------------
 
-# 20. Migration
+# 20. Migration (FluentMigrator)
 
-Create an EF Core migration after the entity model is stable.
+Schema is owned by the separate **`CitadelIQ.FluentMigrations`** project — not by EF Core
+migrations, and not by `Database.EnsureCreated()`. It has no dependency on Domain/Application/
+Infrastructure; `CitadelIQ.Api` (the composition root) references it, calls
+`AddFluentMigrations(connectionString)` and, in Development, `ApplyDatabaseMigrations()` at startup.
+Deployed environments should run migrations explicitly.
 
-Suggested migration name:
-
-``` text
-InitialDocumentVectorSchema
-```
-
-The migration should create:
+Migrations are numbered classes with `[Migration(<yyyyMMddNNNN>)]`, e.g.:
 
 ``` text
-Folders
-Documents
-DocumentChunks
+Migrations/M202609300001_InitialDocumentVectorSchema.cs
 ```
 
-and the required relationships/indexes/vector configuration.
+The initial migration creates:
 
-Also ensure the pgvector extension is enabled.
+``` text
+vector extension
+Folders           (self-referencing FK, ON DELETE CASCADE)
+Documents         (FK -> Folders, ON DELETE CASCADE)
+DocumentChunks    (FK -> Documents, ON DELETE CASCADE)
+```
 
-Apply the migration to the local PostgreSQL database.
+plus:
+
+-   the unique index on `(ParentFolderId, lower(Name))`,
+-   the `Embedding vector(1536)` column on `DocumentChunks` and an HNSW cosine index
+    (`USING hnsw ("Embedding" vector_cosine_ops)`),
+-   the seeded root "Home" folder (`Id = Guid.Empty`).
+
+FluentMigrator has no pgvector type or expression-index support, so those pieces use
+`Execute.Sql(...)`. The vector dimension is therefore fixed *in the migration* (1536 for
+`text-embedding-3-small`); changing the embedding model/dimension requires a new migration (and
+re-embedding), not just a config change. pgvector caps HNSW/IVFFlat at 2000 dimensions.
+
+Applied migrations are tracked by FluentMigrator in its `VersionInfo` table.
 
 ------------------------------------------------------------------------
 
@@ -887,16 +924,16 @@ Suggested settings:
   "ConnectionStrings": {
     "CitadelIQ": "..."
   },
-  "Embeddings": {
-    "Model": "text-embedding-3-small",
-    "Dimension": 1536
+  "OpenAI": {
+    "EmbeddingModel": "text-embedding-3-small",
+    "EmbeddingDimension": 1536
   },
   "Search": {
     "DefaultTopK": 10,
     "MaxTopK": 50
   },
-  "FileStorage": {
-    "RootPath": "..."
+  "Storage": {
+    "DocumentsPath": "App_Data/documents"
   }
 }
 ```
@@ -978,7 +1015,7 @@ At minimum, verify:
 ### Database
 
 -   Application can connect to PostgreSQL.
--   EF Core migration succeeds.
+-   FluentMigrator migrations apply successfully.
 -   pgvector extension is available.
 -   Tables are created.
 
@@ -1055,7 +1092,8 @@ Do not duplicate existing classes.
 ## Phase 2 --- Add PostgreSQL Dependencies
 
 -   Add the required PostgreSQL EF Core provider.
--   Add the compatible pgvector EF Core integration.
+-   Add the compatible pgvector EF Core integration (pin EF Core versions consistently).
+-   Create the `CitadelIQ.FluentMigrations` project with the FluentMigrator packages.
 -   Verify package versions against the project's target .NET version.
 -   Restore/build.
 
@@ -1093,15 +1131,10 @@ Configure the vector column.
 
 ## Phase 4 --- Create Migration
 
-Create:
+Create the FluentMigrator migration in `CitadelIQ.FluentMigrations`
+(`M<number>_InitialDocumentVectorSchema`), and wire the runner into `Program.cs`.
 
-``` text
-InitialDocumentVectorSchema
-```
-
-Review the generated migration before applying it.
-
-Verify:
+Review it, then apply it to the local database. Verify:
 
 ``` text
 Folders
@@ -1109,8 +1142,9 @@ Documents
 DocumentChunks
 vector column
 foreign keys
-indexes
+indexes (incl. unique lower(Name) and HNSW)
 pgvector extension
+root Home folder row
 ```
 
 ------------------------------------------------------------------------
@@ -1295,7 +1329,7 @@ Current stack:
 - Clean Architecture
 - React + TypeScript
 - PostgreSQL
-- EF Core
+- EF Core (querying) + FluentMigrator (schema migrations)
 - pgvector
 - OpenAI embeddings
 
@@ -1314,7 +1348,7 @@ Rules:
 2. Reuse existing abstractions where possible.
 3. Keep Domain independent of EF Core/PostgreSQL/OpenAI.
 4. Keep Infrastructure-specific code inside Infrastructure.
-5. Use EF Core migrations.
+5. Use FluentMigrator migrations (separate `CitadelIQ.FluentMigrations` project); EF Core is for querying only.
 6. Store one embedding per document chunk.
 7. Store original files separately from database/vector data.
 8. Preserve existing API contracts where practical.
@@ -1347,7 +1381,7 @@ After Phase 1:
 ``` text
 Proceed to Phase 2 in .claude/technical-designs/postgresql-pgvector.md.
 
-Add only the PostgreSQL EF Core and compatible pgvector dependencies required for the existing target framework.
+Add only the PostgreSQL EF Core, compatible pgvector, and FluentMigrator dependencies required for the existing target framework.
 
 Do not modify application behavior yet.
 
@@ -1383,7 +1417,7 @@ Build the solution and stop after reporting the changes.
 ``` text
 Proceed to Phase 4 in .claude/technical-designs/postgresql-pgvector.md.
 
-Create the EF Core migration described in .claude/technical-designs/postgresql-pgvector.md.
+Create the FluentMigrator migration (in `CitadelIQ.FluentMigrations`) described in .claude/technical-designs/postgresql-pgvector.md.
 
 Before applying it:
 - inspect the migration
@@ -1505,7 +1539,7 @@ Day 5 is complete when all of these are true:
 
 -   [ ] PostgreSQL is connected.
 -   [ ] pgvector is enabled.
--   [ ] EF Core migration exists.
+-   [ ] FluentMigrator migration exists in `CitadelIQ.FluentMigrations`.
 -   [ ] Folder data persists.
 -   [ ] Document metadata persists.
 -   [ ] Document chunks persist.

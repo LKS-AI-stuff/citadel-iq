@@ -1,3 +1,4 @@
+// OBSOLETE: Replaced by FolderRepository (PostgreSQL + pgvector via EF Core). Kept for reference only; not registered in DI.
 using System.Collections.Concurrent;
 using CitadelIQ.Application.Interfaces;
 using CitadelIQ.Domain.Entities;
@@ -8,6 +9,7 @@ namespace CitadelIQ.Infrastructure.Persistence;
 /// Global, app-wide in-memory folder store. Thread-safe singleton; replace with a
 /// database-backed implementation later without touching the Application layer.
 /// </summary>
+[Obsolete("Replaced by FolderRepository (PostgreSQL + pgvector via EF Core). Kept for reference only; not registered in DI.")]
 public class InMemoryFolderRepository : IFolderRepository
 {
     private readonly ConcurrentDictionary<Guid, Folder> _folders = new();

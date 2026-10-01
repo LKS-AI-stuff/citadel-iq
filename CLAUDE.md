@@ -29,7 +29,7 @@ deliberately deferred one.
 ```
 React UI (Vite) ←→ ASP.NET Core API ←→ OpenAI Embeddings API
                           │
-                          ├── In-memory metadata/chunk/embedding stores (lost on restart)
+                          ├── PostgreSQL + pgvector (folders, documents, chunks, embeddings)
                           └── Local disk (App_Data/documents) for raw uploaded file bytes
 ```
 
@@ -40,7 +40,8 @@ CitadelIQ.sln
  ├─ CitadelIQ.Domain          (no dependencies)
  ├─ CitadelIQ.Application     (depends on Domain)
  ├─ CitadelIQ.Infrastructure  (depends on Application, Domain)
- └─ CitadelIQ.Api             (depends on Application, Infrastructure)
+ ├─ CitadelIQ.FluentMigrations (schema migrations; no project dependencies)
+ └─ CitadelIQ.Api             (depends on Application, Infrastructure, FluentMigrations)
 ```
 
 **Domain** (`CitadelIQ.Domain/`): `Folder`, `Document`, `DocumentChunk`, `DocumentEmbedding`
@@ -66,9 +67,14 @@ dependencies (no OpenAI SDK, no ASP.NET, no disk I/O). Key pieces:
 
 **Infrastructure** (`CitadelIQ.Infrastructure/`): the only layer allowed to depend on OpenAI, the
 filesystem, or a specific persistence mechanism.
-- `Persistence/InMemory*Repository` — `ConcurrentDictionary`-backed, singleton, global (not
-  per-session — see .claude/technical-designs/design.md §3 for why). Swapping these for Postgres/EF Core later is an
-  Infrastructure-only change.
+- `Persistence/` — EF Core + PostgreSQL + pgvector (`CitadelIQDbContext`, `Configurations/`,
+  scoped `*Repository` classes; EF is used for queries only). The embedding is a pgvector `vector(N)` column on
+  `DocumentChunks` (shadow properties `Embedding`/`ModelName`, not on the domain entity), with an HNSW
+  cosine index. **The schema is owned by `CitadelIQ.FluentMigrations`** (FluentMigrator; the EF model just mirrors it). `VectorSearchRepository` runs the similarity query (`ORDER BY embedding <=> @q LIMIT k`)
+  after filtering to `Ready` documents and the folder-id set `SearchService` resolved. The unique
+  `(ParentFolderId, lower(Name))` index lives in the migration; `FolderRepository` translates its
+  violation into the usual "already exists" `ValidationException`. DbContext is scoped, so each background
+  processing task (own DI scope) gets its own.
 - `Storage/LocalDiskDocumentStorage` — raw file bytes go to `App_Data/documents/` (configurable
   via `Storage:DocumentsPath`), **not** `bin/` (which `dotnet build`/`clean` wipes) and **not**
   RAM (see .claude/technical-designs/design.md §3 for the reasoning: keeps memory pressure off large uploads).
@@ -106,9 +112,8 @@ explicitly out of scope for this version — see .claude/technical-designs/desig
    effect) to progress the UI through `ExtractingText → Chunking → GeneratingEmbeddings →
    Ready/Failed`, and fires a toast when a document transitions from in-progress to settled.
 
-Because everything (metadata, chunks, embeddings) is in-memory, **restarting the API loses all of
-it** — but the raw files on disk survive, so after a restart you'll see an empty folder tree with
-orphaned files still in `App_Data/documents` until a future cleanup step exists.
+Metadata, chunks and embeddings persist in PostgreSQL, so they survive restarts. A document still being
+processed when the API stops stays in its in-progress status (the dispatcher is not a persistent queue).
 
 ### Search flow
 
@@ -119,16 +124,15 @@ orphaned files still in `App_Data/documents` until a future cleanup step exists.
    the frontend only sends `currentFolderId` + `searchScope`.
 3. Filters to documents with `ProcessingStatus.Ready` (in-progress/failed documents are silently
    excluded from results, not treated as a hard error).
-4. Embeds the query once, computes cosine similarity (`CosineSimilarity.Compute`) against every
-   eligible chunk's stored embedding, sorts descending, takes top-K (`SearchOptions.DefaultTopK`,
-   overridable per-request up to `SearchOptions.MaxTopK`).
+4. Embeds the query once and hands it, with the resolved folder-id set (`null` = entire portal) and top-K
+   (`SearchOptions.DefaultTopK`, overridable per-request up to `SearchOptions.MaxTopK`), to
+   `IVectorSearchRepository`, which ranks by pgvector cosine distance in SQL (score = 1 − distance).
 5. Builds each result's folder-path display via `FolderPathBuilder`, omitting the root "Home"
    segment (e.g. `"HR / Policies"`, not `"Home / HR / Policies"`), matching the requirements'
    example format.
 
-Similarity/ranking/top-K are all implemented in-app — the OpenAI SDK is used **only** to generate
-embeddings, per the requirements' explicit constraint (no vector DB, no Semantic Kernel, no
-LangChain, no RAG answer generation yet).
+Similarity/ranking/top-K run in PostgreSQL via pgvector — the OpenAI SDK is used **only** to generate
+embeddings (no Semantic Kernel, no LangChain, no RAG answer generation yet).
 
 ### Frontend architecture
 
@@ -235,11 +239,25 @@ dotnet run
 
 Runs on `http://localhost:5157` by default (see `Properties/launchSettings.json`).
 
+**PostgreSQL with the pgvector extension** must be running (e.g. the `pgvector/pgvector` Docker image). In
+Development the API applies FluentMigrator migrations on startup. Set the connection string (the committed value is empty):
+```bash
+dotnet user-secrets set "ConnectionStrings:CitadelIQ" "Host=localhost;Port=5432;Database=citadeliq;Username=postgres;Password=..."
+```
+
 **Required secrets** (never in `appsettings.json` — that file is committed to git):
 ```bash
 dotnet user-secrets set "OpenAI:ApiKey" "sk-..."
 dotnet user-secrets set "OpenAI:EmbeddingModel" "text-embedding-3-small"
 ```
+
+### Docker (deployment)
+
+`docker-compose.yml` runs `pgvector/pgvector:pg17`, the API (`CitadelIQ.Api/Dockerfile`, build context = repo
+root) and the UI (`citadel-iq-ui/Dockerfile` → nginx). Copy `.env.example` to `.env` first. The API applies
+migrations via `Database__MigrateOnStartup=true` (on in `appsettings.Development.json`, off by default);
+uploaded files persist in the `documents` volume. Local development doesn't need it — use Postgres.app.
+`VITE_API_URL` is baked into the UI at build time. The app has no auth: don't expose it publicly.
 
 ### Frontend
 
@@ -267,6 +285,8 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 |---|---|---|---|
 | `Cors` | `AllowedOrigins` | `["http://localhost:5173"]` | Allowed frontend origins |
 | `OpenAI` | `EmbeddingModel` | `text-embedding-3-small` | Embedding model name |
+| `ConnectionStrings` | `CitadelIQ` | *(empty — user-secrets / env var only)* | PostgreSQL connection string; the app refuses to start if it's empty |
+| `OpenAI` | `EmbeddingDimension` | `1536` | Size of the pgvector column — must match the model; changing it needs a new FluentMigrations migration (the migration hardcodes `vector(1536)`) |
 | `OpenAI` | `ApiKey` | *(user-secrets only)* | Never in `appsettings.json` |
 | `Upload` | `MaxFileSizeMB` | `20` | Rejected before processing starts |
 | `Upload` | `AllowedExtensions` | `.pdf .docx .txt .csv .xlsx` | Configurable allow-list, not hardcoded |
@@ -323,7 +343,7 @@ converter registered in `Program.cs`), e.g. `"searchScope": "CurrentFolderAndSub
 
 ## Out of scope for this version
 
-Authentication/authorization, per-user document spaces, PostgreSQL/pgvector, EF Core/FluentMigrator,
+Authentication/authorization, per-user document spaces, FluentMigrator,
 RAG/LLM-generated answers, search history/pagination, hybrid keyword search, file rename, move,
 bulk operations, document previews, audit logging, background job queues (the current dispatcher
 is in-process fire-and-forget, not a persistent queue). See [design.md](./.claude/technical-designs/design.md) §9 and §21 for the

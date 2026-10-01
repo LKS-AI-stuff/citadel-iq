@@ -65,6 +65,11 @@ API key, `.env.local` for the frontend, CORS allow-list) will be reused here.
     smaller chunks discriminate better between topically-similar documents; configurable)
   - `TopK` default: 10
 
+> **Update:** this deferral has since been lifted — see [postgresql-pgvector.md](./postgresql-pgvector.md).
+> Storage is now PostgreSQL + pgvector, queried through EF Core, with the schema owned by
+> FluentMigrator migrations in the separate `CitadelIQ.FluentMigrations` project. The reasoning
+> below is kept as the historical record of why it was deferred originally.
+
 ### Why EF Core / FluentMigrator / Postgres are deferred, not adopted now
 
 These were discussed and intentionally **not** adopted for this phase:

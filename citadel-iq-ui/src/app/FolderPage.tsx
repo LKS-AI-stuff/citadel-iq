@@ -128,7 +128,7 @@ export function FolderPage() {
                   icon={<InsertDriveFileOutlinedIcon sx={{ fontSize: 22, color: 'primary.main' }} />}
                 />
               ) : (
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 2 }}>
                   {contents.documents.map((document, index) => (
                     <FileCard
                       key={document.id}
@@ -158,7 +158,7 @@ export function FolderPage() {
                   icon={<FolderIcon sx={{ fontSize: 22, color: 'primary.main' }} />}
                 />
               ) : (
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 2 }}>
                   {contents.subfolders.map((folder, index) => (
                     <FolderCard
                       key={folder.id}

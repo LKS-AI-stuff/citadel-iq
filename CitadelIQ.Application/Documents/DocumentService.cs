@@ -39,7 +39,17 @@ public class DocumentService(
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
 
         await documentStorage.SaveAsync(document.Id, extension, content, cancellationToken);
-        await documentRepository.AddAsync(document, cancellationToken);
+
+        try
+        {
+            await documentRepository.AddAsync(document, cancellationToken);
+        }
+        catch
+        {
+            // Don't leave an orphaned file behind if the record couldn't be saved.
+            await documentStorage.DeleteAsync(document.Id, extension, CancellationToken.None);
+            throw;
+        }
 
         processingDispatcher.Dispatch(document.Id);
 
@@ -93,8 +103,11 @@ public class DocumentService(
                 embeddings.Add(DocumentEmbedding.Create(chunk.Id, vectors[i], embeddingService.ModelName));
             }
 
+            // Chunks are persisted first, then their embeddings; the document only becomes Ready (and
+            // therefore searchable) after both succeed.
             await chunkRepository.AddRangeAsync(chunks, cancellationToken);
             await embeddingRepository.AddRangeAsync(embeddings, cancellationToken);
+            logger.LogInformation("Persisted {ChunkCount} chunks with embeddings for document {DocumentId}", chunks.Count, document.Id);
 
             document.AdvanceTo(ProcessingStatus.Ready);
             await documentRepository.UpdateAsync(document, cancellationToken);
@@ -106,6 +119,9 @@ public class DocumentService(
                 : "We couldn't process this document. Please try again.";
 
             logger.LogError(ex, "Failed to process document {DocumentId}", document.Id);
+
+            // Don't leave partially-indexed chunks behind for a failed document.
+            await chunkRepository.DeleteByDocumentIdsAsync([document.Id], CancellationToken.None);
             document.MarkFailed(safeReason);
             await documentRepository.UpdateAsync(document, cancellationToken);
         }
@@ -145,11 +161,8 @@ public class DocumentService(
             return;
         }
 
+        // Chunks (which carry their embeddings) go first, then the file, then the document record.
         var documentIds = documents.Select(d => d.Id).ToList();
-        var chunks = await chunkRepository.GetByDocumentIdsAsync(documentIds, cancellationToken);
-        var chunkIds = chunks.Select(c => c.Id).ToList();
-
-        await embeddingRepository.DeleteByChunkIdsAsync(chunkIds, cancellationToken);
         await chunkRepository.DeleteByDocumentIdsAsync(documentIds, cancellationToken);
 
         foreach (var document in documents)
