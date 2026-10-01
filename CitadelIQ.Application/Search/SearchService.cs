@@ -54,6 +54,7 @@ public class SearchService(
                 match.ChunkText,
                 match.ChunkIndex,
                 match.PageNumber,
+                match.SheetName,
                 match.SimilarityScore));
         }
 

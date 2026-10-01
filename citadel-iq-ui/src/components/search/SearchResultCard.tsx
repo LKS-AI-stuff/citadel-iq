@@ -89,6 +89,7 @@ export function SearchResultCard({ result, query, rank, animationDelayMs = 0 }: 
         </Tooltip>
         <Chip size="small" variant="outlined" label={`Chunk ${result.chunkIndex + 1}`} />
         {result.pageNumber != null && <Chip size="small" variant="outlined" label={`Page ${result.pageNumber}`} />}
+        {result.sheetName != null && <Chip size="small" variant="outlined" label={`Sheet: ${result.sheetName}`} />}
       </Stack>
     </GlassSurface>
   );

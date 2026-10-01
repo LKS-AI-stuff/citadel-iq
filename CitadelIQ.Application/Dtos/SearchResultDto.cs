@@ -8,4 +8,5 @@ public record SearchResultDto(
     string ChunkText,
     int ChunkIndex,
     int? PageNumber,
+    string? SheetName,
     double SimilarityScore);

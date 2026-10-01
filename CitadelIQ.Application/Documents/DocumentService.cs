@@ -72,9 +72,9 @@ public class DocumentService(
             await documentRepository.UpdateAsync(document, cancellationToken);
 
             await using var stream = await documentStorage.OpenReadAsync(document.Id, extension, cancellationToken);
-            var text = await textExtractionService.ExtractAsync(stream, extension, cancellationToken);
+            var sections = await textExtractionService.ExtractAsync(stream, extension, cancellationToken);
 
-            if (string.IsNullOrWhiteSpace(text))
+            if (sections.All(section => string.IsNullOrWhiteSpace(section.Text)))
             {
                 throw new DocumentProcessingException("This document appears to be empty or its text could not be extracted.");
             }
@@ -82,8 +82,8 @@ public class DocumentService(
             document.AdvanceTo(ProcessingStatus.Chunking);
             await documentRepository.UpdateAsync(document, cancellationToken);
 
-            var chunkTexts = textChunker.Chunk(text);
-            if (chunkTexts.Count == 0)
+            var textChunks = textChunker.Chunk(sections);
+            if (textChunks.Count == 0)
             {
                 throw new DocumentProcessingException("This document appears to be empty or its text could not be extracted.");
             }
@@ -91,14 +91,14 @@ public class DocumentService(
             document.AdvanceTo(ProcessingStatus.GeneratingEmbeddings);
             await documentRepository.UpdateAsync(document, cancellationToken);
 
-            var vectors = await embeddingService.GenerateEmbeddingsAsync(chunkTexts, cancellationToken);
+            var vectors = await embeddingService.GenerateEmbeddingsAsync(textChunks.Select(c => c.Text).ToList(), cancellationToken);
 
-            var chunks = new List<DocumentChunk>(chunkTexts.Count);
-            var embeddings = new List<DocumentEmbedding>(chunkTexts.Count);
+            var chunks = new List<DocumentChunk>(textChunks.Count);
+            var embeddings = new List<DocumentEmbedding>(textChunks.Count);
 
-            for (var i = 0; i < chunkTexts.Count; i++)
+            for (var i = 0; i < textChunks.Count; i++)
             {
-                var chunk = DocumentChunk.Create(document.Id, i, chunkTexts[i]);
+                var chunk = DocumentChunk.Create(document.Id, i, textChunks[i].Text, textChunks[i].PageNumber, textChunks[i].SheetName);
                 chunks.Add(chunk);
                 embeddings.Add(DocumentEmbedding.Create(chunk.Id, vectors[i], embeddingService.ModelName));
             }

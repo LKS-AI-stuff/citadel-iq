@@ -18,6 +18,10 @@ public class DocumentChunkConfiguration(int embeddingDimension) : IEntityTypeCon
         builder.HasKey(c => c.Id);
         builder.Property(c => c.Id).ValueGeneratedNever();
         builder.Property(c => c.Text).IsRequired();
+        builder.Property(c => c.SheetName).HasMaxLength(255);
+
+        // At most one of PageNumber (PDF) / SheetName (XLSX) is set; enforced by a CHECK in the migration.
+        builder.ToTable(t => t.HasCheckConstraint("CK_DocumentChunks_PageOrSheet", "\"PageNumber\" IS NULL OR \"SheetName\" IS NULL"));
 
         builder.HasOne<Document>()
             .WithMany()

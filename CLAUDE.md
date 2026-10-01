@@ -134,8 +134,12 @@ processed when the API stops stays in its in-progress status (the dispatcher is 
    example format.
 
 There is **no minimum-similarity threshold** — the top-K nearest chunks are always returned, however weak.
-`DocumentChunk.PageNumber` exists and is returned, but is never populated (the extractors return plain text
-without page info), so it is always null today.
+`DocumentChunk.PageNumber` (PDFs) and `DocumentChunk.SheetName` (XLSX) locate a chunk in its source:
+`ITextExtractor` returns `ExtractedSection`s (one per non-blank PDF page, one per non-empty XLSX worksheet, a single
+location-less section for DOCX/TXT/CSV) and `TextChunker` chunks each section separately, so a chunk never spans a
+page/sheet and overlap does not carry across the boundary. At most one of the two is set (DB CHECK constraint
+`CK_DocumentChunks_PageOrSheet`). DOCX has no location (no reliable page boundaries); documents uploaded before
+these changes have nulls — re-upload to populate.
 
 Similarity/ranking/top-K run in PostgreSQL via pgvector — the OpenAI SDK is used **only** to generate
 embeddings (no Semantic Kernel, no LangChain, no RAG answer generation yet).

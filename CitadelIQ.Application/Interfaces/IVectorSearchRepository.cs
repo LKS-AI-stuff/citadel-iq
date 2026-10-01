@@ -13,6 +13,7 @@ public record DocumentSearchResult(
     string ChunkText,
     int ChunkIndex,
     int? PageNumber,
+    string? SheetName,
     double SimilarityScore);
 
 public interface IVectorSearchRepository

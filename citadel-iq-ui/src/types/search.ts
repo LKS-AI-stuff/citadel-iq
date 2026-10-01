@@ -15,5 +15,6 @@ export interface SearchResultDto {
   chunkText: string;
   chunkIndex: number;
   pageNumber: number | null;
+  sheetName: string | null;
   similarityScore: number;
 }

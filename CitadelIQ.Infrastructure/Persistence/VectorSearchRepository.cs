@@ -46,6 +46,7 @@ public class VectorSearchRepository(CitadelIQDbContext db) : IVectorSearchReposi
                 x.chunk.Text,
                 x.chunk.ChunkIndex,
                 x.chunk.PageNumber,
+                x.chunk.SheetName,
                 Distance = EF.Property<Vector>(x.chunk, DocumentChunkConfiguration.EmbeddingProperty).CosineDistance(queryVector)
             })
             .OrderBy(x => x.Distance)
@@ -54,7 +55,7 @@ public class VectorSearchRepository(CitadelIQDbContext db) : IVectorSearchReposi
 
         return rows
             .Select(r => new DocumentSearchResult(
-                r.ChunkId, r.DocumentId, r.FolderId, r.FileName, r.ContentType, r.Text, r.ChunkIndex, r.PageNumber, 1d - r.Distance))
+                r.ChunkId, r.DocumentId, r.FolderId, r.FileName, r.ContentType, r.Text, r.ChunkIndex, r.PageNumber, r.SheetName, 1d - r.Distance))
             .ToList();
     }
 }

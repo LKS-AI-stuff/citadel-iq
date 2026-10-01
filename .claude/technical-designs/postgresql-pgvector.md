@@ -327,6 +327,7 @@ DocumentId
 ChunkIndex
 Text
 PageNumber
+SheetName
 Embedding
 ModelName
 CreatedAt
@@ -348,6 +349,18 @@ CreatedAt
 -   `ChunkIndex` identifies the chunk's position within the document.
 -   `Text` contains the extracted text for that chunk.
 -   `PageNumber` is nullable — not every source format has page boundaries (e.g. `.txt`/`.csv`).
+    **As implemented:** it is populated for PDFs only (1-based, one extractor section per non-blank
+    page). DOCX is deliberately left without a location: it has no reliable page boundaries without
+    rendering the document, and a heading-based label was considered and skipped.
+-   `SheetName` (nullable, max 255) is the XLSX equivalent — the worksheet the chunk came from (one extractor
+    section per non-empty sheet). **A chunk has a page or a sheet, never both**, enforced by the CHECK constraint
+    `CK_DocumentChunks_PageOrSheet`. Separate nullable columns were chosen over a single generic label column
+    because page numbers already existed and are typed/numeric; if more formats with their own locations are
+    added (e.g. PPTX slides), revisit replacing both with one `SourceLabel` column.
+-   Both come from `ITextExtractor`, which returns `ExtractedSection`s (`PageNumber`, `Text`, `SheetName`)
+    instead of one string; `TextChunker` chunks each section separately, so a chunk never spans a page/sheet and
+    overlap does not carry across the boundary. Documents uploaded before this was added have nulls
+    (re-upload to populate).
 -   `Embedding` stores the vector generated for that chunk, and `ModelName` records which model
     generated it.
 -   Do not create one embedding for the entire document.
@@ -560,7 +573,7 @@ rows that get thrown away anyway.
 **As implemented:** `eligibleFolderIds` is nullable (`IReadOnlyCollection<Guid>?`) — `null` means no
 folder filter (Entire Portal), which avoids materialising every folder id. `DocumentSearchResult`
 carries the chunk and document fields the search DTO needs (chunk/document/folder ids, file name,
-content type, chunk text/index, page number, `SimilarityScore` = 1 − cosine distance); `SearchService`
+content type, chunk text/index, page number, sheet name, `SimilarityScore` = 1 − cosine distance); `SearchService`
 adds the folder-path display. Repository interfaces that became unused were removed
 (`IDocumentRepository.GetAllAsync`, `IDocumentChunkRepository.GetByDocumentIdsAsync`,
 `IEmbeddingRepository.GetByChunkIdsAsync`/`DeleteByChunkIdsAsync`); embeddings are deleted with their
@@ -695,7 +708,8 @@ FolderPath
 ChunkText
 SimilarityScore
 ChunkNumber
-PageNumber (optional)
+PageNumber (optional, PDF only)
+SheetName (optional, XLSX only)
 FileType
 DocumentId
 ChunkId
@@ -787,13 +801,15 @@ Do not optimize prematurely.
 Schema is owned by the separate **`CitadelIQ.FluentMigrations`** project — not by EF Core
 migrations, and not by `Database.EnsureCreated()`. It has no dependency on Domain/Application/
 Infrastructure; `CitadelIQ.Api` (the composition root) references it, calls
-`AddFluentMigrations(connectionString)` and, in Development, `ApplyDatabaseMigrations()` at startup.
-Deployed environments should run migrations explicitly.
+`AddFluentMigrations(connectionString)` and, when `Database:MigrateOnStartup` is true,
+`ApplyDatabaseMigrations()` at startup. The flag is on in `appsettings.Development.json` and in
+`docker-compose.yml` (`Database__MigrateOnStartup`), and off by default.
 
 Migrations are numbered classes with `[Migration(<yyyyMMddNNNN>)]`, e.g.:
 
 ``` text
 Migrations/M202609300001_InitialDocumentVectorSchema.cs
+Migrations/M202610010001_AddSheetNameToDocumentChunks.cs   (SheetName column + page-or-sheet CHECK)
 ```
 
 The initial migration creates:
