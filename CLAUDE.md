@@ -385,9 +385,13 @@ above.)
 
 ## Known gaps and conventions
 
-- **No automated tests.** Verification so far has been `dotnet build`, `tsc`/`lint`/`vite build`, and
-  inspecting the generated SQL (`ToQueryString`, `dotnet ef`-style script output). The Postgres path has not
-  been exercised end-to-end by tests.
+- **Tests (`CitadelIQ.Tests`, xUnit):** `dotnet test CitadelIQ.slnx`. `Unit/` covers `TextChunker` and the text
+  extractors (no Docker needed). `Integration/` starts a throwaway `pgvector/pgvector:pg17` container via Testcontainers
+  (**Docker must be running**), gives every test its own freshly-migrated database, and exercises the real
+  repositories/services: migrations, upload→process, page/sheet locations, failure cleanup, vector search ranking,
+  scopes, `MinSimilarity`, Ready-only search, folder uniqueness (incl. concurrent creates) and cascade delete.
+  Only OpenAI (`FakeEmbeddingService`, deterministic topic-axis vectors) and the background dispatcher (no-op;
+  tests call `ProcessDocumentAsync`) are replaced. No API-level (HTTP) tests and no frontend tests yet.
 - **Obsolete-but-kept code:** `InMemory*Repository` classes and `CosineSimilarity` are marked `[Obsolete]`,
   not registered in DI, and kept on purpose — don't delete them or wire them back in.
 - **Stop hook** (`.claude/hooks/kill-stale-backend.sh`): kills the backend on `:5157` at the end of a turn only if

@@ -4,4 +4,5 @@
   <Project Path="CitadelIQ.Domain/CitadelIQ.Domain.csproj" />
   <Project Path="CitadelIQ.FluentMigrations/CitadelIQ.FluentMigrations.csproj" />
   <Project Path="CitadelIQ.Infrastructure/CitadelIQ.Infrastructure.csproj" />
+  <Project Path="CitadelIQ.Tests/CitadelIQ.Tests.csproj" />
 </Solution>

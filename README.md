@@ -26,6 +26,7 @@ citadel-iq/
 ├── CitadelIQ.Application/       # Use cases, interfaces, DTOs, AutoMapper profile
 ├── CitadelIQ.Infrastructure/    # EF Core + PostgreSQL/pgvector repos, local-disk storage, OpenAI SDK, text extraction
 ├── CitadelIQ.FluentMigrations/  # FluentMigrator schema migrations (owns the database schema)
+├── CitadelIQ.Tests/             # xUnit unit + Testcontainers integration tests
 ├── CitadelIQ.Api/               # ASP.NET Core Web API — controllers, DI, config, middleware
 │   └── App_Data/documents/      # Uploaded file bytes (gitignored, created at runtime)
 ├── citadel-iq-ui/               # React + TypeScript + Vite frontend
@@ -225,6 +226,13 @@ See [CLAUDE.md](./CLAUDE.md) for the full configuration reference and architectu
 ```bash
 dotnet run       # Run the API
 dotnet build     # Build the solution
+```
+
+**Tests** (repo root — integration tests need Docker running; they start their own throwaway Postgres+pgvector)
+```bash
+dotnet test CitadelIQ.slnx                                       # all tests
+dotnet test CitadelIQ.Tests --filter "FullyQualifiedName~Unit"   # unit tests only (no Docker)
+dotnet test CitadelIQ.Tests --filter "FullyQualifiedName~Search" # tests with "Search" in the name
 ```
 
 **Frontend** (`citadel-iq-ui/`)
