@@ -17,10 +17,10 @@ It's a monorepo with two components:
 - **Frontend**: React 19 + TypeScript + Vite, Material UI + Tailwind CSS
 
 The authoritative design document is [design.md](./.claude/technical-designs/design.md) — read it before making architectural
-changes. It records the decisions made during planning (in-memory storage now, EF Core/Postgres
-deferred; disk-based raw file storage; fire-and-forget processing instead of a job queue) along
-with the reasoning, so a change that looks like an obvious improvement may already be a
-deliberately deferred one.
+changes. It records the decisions made during planning (originally in-memory storage — since replaced by
+PostgreSQL + pgvector, see [postgresql-pgvector.md](./.claude/technical-designs/postgresql-pgvector.md);
+disk-based raw file storage; fire-and-forget processing instead of a job queue) along with the
+reasoning, so a change that looks like an obvious improvement may already be a deliberately deferred one.
 
 ## Architecture
 
@@ -55,9 +55,11 @@ dependencies (no OpenAI SDK, no ASP.NET, no disk I/O). Key pieces:
   breadcrumbs and search result folder-path display)
 - `Documents/DocumentService` (upload → validate → save → dispatch background processing),
   `Documents/TextChunker` (configurable chunk size/overlap)
-- `Search/SearchService`, `Search/CosineSimilarity`
+- `Search/SearchService` (resolves scope → folder ids, embeds the query, calls `IVectorSearchRepository`).
+  `Search/CosineSimilarity` is **obsolete** (superseded by pgvector) and unused — kept for reference.
 - `Interfaces/` — repository and service abstractions (`IFolderRepository`,
-  `IDocumentRepository`, `IDocumentChunkRepository`, `IEmbeddingRepository`, `IDocumentStorage`,
+  `IDocumentRepository`, `IDocumentChunkRepository`, `IEmbeddingRepository` (attaches vectors to
+  persisted chunks), `IVectorSearchRepository` (similarity query), `IDocumentStorage`,
   `IOpenAIEmbeddingService`, `ITextExtractor`, `ITextExtractionService`, `IFileValidator`,
   `IDocumentProcessingDispatcher`) — every external or storage dependency is behind one of these
 - `Options/` — `UploadOptions`, `ChunkingOptions`, `SearchOptions`, `OpenAIOptions`,
@@ -130,6 +132,10 @@ processed when the API stops stays in its in-progress status (the dispatcher is 
 5. Builds each result's folder-path display via `FolderPathBuilder`, omitting the root "Home"
    segment (e.g. `"HR / Policies"`, not `"Home / HR / Policies"`), matching the requirements'
    example format.
+
+There is **no minimum-similarity threshold** — the top-K nearest chunks are always returned, however weak.
+`DocumentChunk.PageNumber` exists and is returned, but is never populated (the extractors return plain text
+without page info), so it is always null today.
 
 Similarity/ranking/top-K run in PostgreSQL via pgvector — the OpenAI SDK is used **only** to generate
 embeddings (no Semantic Kernel, no LangChain, no RAG answer generation yet).
@@ -251,13 +257,30 @@ dotnet user-secrets set "OpenAI:ApiKey" "sk-..."
 dotnet user-secrets set "OpenAI:EmbeddingModel" "text-embedding-3-small"
 ```
 
+### Local database (Docker) and migrations
+
+Local dev runs PostgreSQL via `docker run ... pgvector/pgvector:pg17` with a named volume (exact commands,
+`psql` usage and reset steps are in [README.md](./README.md)). The data lives in the volume; uploaded files
+live separately in `App_Data/documents` — reset both together.
+
+**Adding a schema change:** add a new numbered class to `CitadelIQ.FluentMigrations/Migrations/`
+(`[Migration(<next number>)]`; use `Execute.Sql` for pgvector/expression-index bits), then update the matching
+EF configuration in `CitadelIQ.Infrastructure/Persistence/Configurations/` by hand — nothing verifies the two
+agree, and a mismatch only shows up as a query error. The migration runs at startup when
+`Database:MigrateOnStartup` is true (set in `appsettings.Development.json`). The embedding dimension
+(`vector(1536)`) is hardcoded in the first migration; changing the model/dimension needs a new migration and
+re-embedding.
+
 ### Docker (deployment)
 
-`docker-compose.yml` runs `pgvector/pgvector:pg17`, the API (`CitadelIQ.Api/Dockerfile`, build context = repo
-root) and the UI (`citadel-iq-ui/Dockerfile` → nginx). Copy `.env.example` to `.env` first. The API applies
-migrations via `Database__MigrateOnStartup=true` (on in `appsettings.Development.json`, off by default);
-uploaded files persist in the `documents` volume. Local development doesn't need it — use Postgres.app.
-`VITE_API_URL` is baked into the UI at build time. The app has no auth: don't expose it publicly.
+`docker-compose.yml` runs `pgvector/pgvector:pg17` (pinned — a major bump won't start on an existing volume),
+the API (`CitadelIQ.Api/Dockerfile`, build context = repo root) and the UI (`citadel-iq-ui/Dockerfile` →
+nginx). Copy `.env.example` to `.env` (`POSTGRES_PASSWORD`, `OPENAI_API_KEY`, optional `OPENAI_EMBEDDING_MODEL`,
+`PUBLIC_API_URL`, `UI_ORIGIN`). The API receives `ConnectionStrings__CitadelIQ`, `OpenAI__ApiKey`,
+`Cors__AllowedOrigins__0` and `Database__MigrateOnStartup=true` as environment variables; Postgres data and
+uploaded files persist in the `pgdata` and `documents` volumes (back up both together). `VITE_API_URL` is baked
+into the UI at build time. Postgres is not published to the host. The app has no auth: don't expose it publicly.
+These Docker files have not yet been built/run end-to-end.
 
 ### Frontend
 
@@ -314,9 +337,10 @@ GET    /health
 `DELETE /api/folders/{folderId}` rejects the well-known root ("Home") folder with a 400. Folder
 deletion walks the full descendant tree server-side (`IFolderRepository.GetDescendantIdsAsync`,
 already recursive) and deletes every document found anywhere in that subtree via
-`IDocumentService.DeleteDocumentsAsync` before removing the folder records themselves — chunks and
-embeddings are deleted before the raw file and document record, so a crash mid-delete never leaves
-orphaned chunks/embeddings pointing at a missing document.
+`IDocumentService.DeleteDocumentsAsync` before removing the folder records themselves. Embeddings are a
+column on the chunk row, so deleting a document's chunks removes them too; chunks are deleted before the raw
+file and document record, so a crash mid-delete never leaves orphaned chunks pointing at a missing document.
+(The FK `ON DELETE CASCADE` rules in the schema are a backstop, not the primary path.)
 
 `PUT /api/folders/{folderId}` also rejects renaming the root ("Home") folder with a 400, and
 rejects a name collision with a sibling (same `ExistsWithNameAsync` check `POST /api/folders`
@@ -330,23 +354,36 @@ converter registered in `Program.cs`), e.g. `"searchScope": "CurrentFolderAndSub
 1. Keep the backend Clean Architecture — Application never references Infrastructure or Api;
    Domain never references anything.
 2. Keep business logic out of controllers — they only map HTTP ↔ Application calls.
-3. Every external dependency (OpenAI, disk, in-memory store) sits behind an Application-layer
-   interface — this is what makes the future Postgres/pgvector swap an Infrastructure-only change.
+3. Every external dependency (OpenAI, disk, the database) sits behind an Application-layer
+   interface — this is what made the Postgres/pgvector swap an Infrastructure-only change.
 4. File-size/type limits and chunk size/overlap are configuration, not hardcoded — see the table
    above.
 5. Never expose API keys, stack traces, or internal exception details in an API response — route
    all failures through `ExceptionHandlingMiddleware`'s known exception types, or accept the
    generic 500 message.
 6. Async everywhere for I/O — file processing and OpenAI calls.
-7. No video uploads, no vector database yet, no Semantic Kernel, no LangChain, no RAG
-   answer-generation — these are documented future phases, not oversights.
+7. No video uploads, no separate vector database (pgvector inside PostgreSQL is the vector store), no
+   Semantic Kernel, no LangChain, no RAG answer-generation — these are documented future phases, not oversights.
 
 ## Out of scope for this version
 
-Authentication/authorization, per-user document spaces, FluentMigrator,
+Authentication/authorization, per-user document spaces,
 RAG/LLM-generated answers, search history/pagination, hybrid keyword search, file rename, move,
 bulk operations, document previews, audit logging, background job queues (the current dispatcher
 is in-process fire-and-forget, not a persistent queue). See [design.md](./.claude/technical-designs/design.md) §9 and §21 for the
 full future-enhancements list and the reasoning behind each deferral. (Folder *rename* and
 *deletion* — including cascade delete of a folder's subtree — are in scope; see the API contract
 above.)
+
+## Known gaps and conventions
+
+- **No automated tests.** Verification so far has been `dotnet build`, `tsc`/`lint`/`vite build`, and
+  inspecting the generated SQL (`ToQueryString`, `dotnet ef`-style script output). The Postgres path has not
+  been exercised end-to-end by tests.
+- **Obsolete-but-kept code:** `InMemory*Repository` classes and `CosineSimilarity` are marked `[Obsolete]`,
+  not registered in DI, and kept on purpose — don't delete them or wire them back in.
+- **Stop hook** (`.claude/hooks/kill-stale-backend.sh`): kills the backend on `:5157` at the end of a turn only if
+  a backend file (`.cs`/`.csproj`/`.slnx`/`appsettings*.json`) changed after that process started, so
+  frontend-only edits leave it running; restart `dotnet run` after backend edits.
+- `.claude/hooks/block-appsettings-secrets.py` blocks writing an OpenAI-key-looking value into
+  `appsettings*.json`; `ConnectionStrings:CitadelIQ` is intentionally empty there.
