@@ -717,6 +717,11 @@ ChunkId
 
 Sort results by relevance.
 
+**Minimum similarity:** results below `Search:MinSimilarity` (default 0.25, 0 disables) are excluded in the SQL
+(`distance <= 1 - MinSimilarity`), so a query the documents don't cover returns an empty list instead of the K
+nearest irrelevant chunks. The default is an untuned starting value for `text-embedding-3-small`; it is a plain
+config value (override via user-secrets / `Search__MinSimilarity`) to be adjusted from real usage.
+
 Important:
 
 **Similarity score is not a probability.**
@@ -946,7 +951,8 @@ Suggested settings:
   },
   "Search": {
     "DefaultTopK": 10,
-    "MaxTopK": 50
+    "MaxTopK": 50,
+    "MinSimilarity": 0.25
   },
   "Storage": {
     "DocumentsPath": "App_Data/documents"

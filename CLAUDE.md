@@ -133,7 +133,10 @@ processed when the API stops stays in its in-progress status (the dispatcher is 
    segment (e.g. `"HR / Policies"`, not `"Home / HR / Policies"`), matching the requirements'
    example format.
 
-There is **no minimum-similarity threshold** — the top-K nearest chunks are always returned, however weak.
+`Search:MinSimilarity` (default `0.25`, 0 disables) drops chunks below that cosine similarity in SQL, so a query the
+documents don't cover returns no results rather than the K nearest irrelevant chunks. The default is a starting guess
+for `text-embedding-3-small`, **not tuned on real data** — adjust via user-secrets (`dotnet user-secrets set
+"Search:MinSimilarity" "0.3"`) or `Search__MinSimilarity` when results look too sparse or too noisy.
 `DocumentChunk.PageNumber` (PDFs) and `DocumentChunk.SheetName` (XLSX) locate a chunk in its source:
 `ITextExtractor` returns `ExtractedSection`s (one per non-blank PDF page, one per non-empty XLSX worksheet, a single
 location-less section for DOCX/TXT/CSV) and `TextChunker` chunks each section separately, so a chunk never spans a
@@ -319,6 +322,7 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 | `Upload` | `AllowedExtensions` | `.pdf .docx .txt .csv .xlsx` | Configurable allow-list, not hardcoded |
 | `Chunking` | `ChunkSize` / `ChunkOverlap` | `400` / `80` (tuned down from `800`/`150` — smaller chunks discriminate better between topically-similar documents) | Characters per chunk / overlap |
 | `Search` | `DefaultTopK` / `MaxTopK` | `10` / `50` | Result count defaults/caps |
+| `Search` | `MinSimilarity` | `0.25` | Minimum cosine similarity for a result (0 = off); untuned starting value, override via user-secrets |
 | `Storage` | `DocumentsPath` | `App_Data/documents` | Relative to `IHostEnvironment.ContentRootPath` — resolved once at host startup, not `Directory.GetCurrentDirectory()` (which depends on how the process was launched) |
 
 ## API contract

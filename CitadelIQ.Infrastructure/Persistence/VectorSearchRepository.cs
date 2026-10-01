@@ -20,6 +20,7 @@ public class VectorSearchRepository(CitadelIQDbContext db) : IVectorSearchReposi
         float[] queryEmbedding,
         IReadOnlyCollection<Guid>? eligibleFolderIds,
         int topK,
+        double minSimilarity,
         CancellationToken cancellationToken = default)
     {
         var queryVector = new Vector(queryEmbedding);
@@ -33,6 +34,15 @@ public class VectorSearchRepository(CitadelIQDbContext db) : IVectorSearchReposi
         if (eligibleFolderIds is not null)
         {
             candidates = candidates.Where(x => eligibleFolderIds.Contains(x.document.FolderId));
+        }
+
+        // similarity = 1 - distance, so "similarity >= min" is "distance <= 1 - min". Filtering in SQL means
+        // Postgres never returns weak matches at all.
+        if (minSimilarity > 0)
+        {
+            var maxDistance = 1d - minSimilarity;
+            candidates = candidates.Where(x =>
+                EF.Property<Vector>(x.chunk, DocumentChunkConfiguration.EmbeddingProperty).CosineDistance(queryVector) <= maxDistance);
         }
 
         var rows = await candidates

@@ -199,6 +199,7 @@ The UI opens at `http://localhost:5173`.
 | `Upload` | `MaxFileSizeMB` / `AllowedExtensions` | `20` / pdf, docx, txt, csv, xlsx | Configurable allow-list |
 | `Chunking` | `ChunkSize` / `ChunkOverlap` | `400` / `80` | Characters |
 | `Search` | `DefaultTopK` / `MaxTopK` | `10` / `50` | Result count |
+| `Search` | `MinSimilarity` | `0.25` | Minimum cosine similarity for a result (0 disables); override via user-secrets |
 | `Storage` | `DocumentsPath` | `App_Data/documents` | Raw file storage location |
 
 See [CLAUDE.md](./CLAUDE.md) for the full configuration reference and architectural details.

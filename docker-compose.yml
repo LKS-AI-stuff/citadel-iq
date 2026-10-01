@@ -31,6 +31,7 @@ services:
       OpenAI__ApiKey: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
       OpenAI__EmbeddingModel: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       Cors__AllowedOrigins__0: ${UI_ORIGIN:-http://localhost:8080}
+      Search__MinSimilarity: ${SEARCH_MIN_SIMILARITY:-0.25}
       Database__MigrateOnStartup: "true"
     volumes:
       - documents:/app/App_Data/documents

@@ -31,11 +31,12 @@ public class SearchService(
         // receives the resolved folder-id filter.
         var eligibleFolderIds = await ResolveEligibleFolderIdsAsync(request, cancellationToken);
         var topK = ResolveTopK(request.TopK);
+        var minSimilarity = Math.Clamp(searchOptions.Value.MinSimilarity, 0d, 1d);
 
-        logger.LogInformation("Vector search started (scope {Scope}, topK {TopK})", request.SearchScope, topK);
+        logger.LogInformation("Vector search started (scope {Scope}, topK {TopK}, minSimilarity {MinSimilarity})", request.SearchScope, topK, minSimilarity);
 
         var queryEmbedding = await embeddingService.GenerateEmbeddingAsync(request.Query, cancellationToken);
-        var matches = await vectorSearchRepository.SearchAsync(queryEmbedding, eligibleFolderIds, topK, cancellationToken);
+        var matches = await vectorSearchRepository.SearchAsync(queryEmbedding, eligibleFolderIds, topK, minSimilarity, cancellationToken);
 
         logger.LogInformation("Vector search completed with {ResultCount} results", matches.Count);
 
