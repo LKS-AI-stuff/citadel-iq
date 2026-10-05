@@ -673,7 +673,7 @@ config, testing), this design's findings; update `.env.example`.
 
 | Question | Result |
 |---|---|
-| Model name accepted by the account | _tbd_ |
+| Model name accepted by the account | _not run_ — Phase 0 needs a real API key; run before relying on `gpt-5.6-luna` |
 | Non-streaming call works with SDK 2.14.0 | _tbd_ |
 | Streaming works; text part kinds | _tbd_ |
 | Token usage available on streams | _tbd_ |

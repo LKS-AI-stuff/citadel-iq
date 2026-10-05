@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **CitadelIQ** is an AI-powered document management and semantic search portal — a professional,
 enterprise-style application, not a chatbot. Users organize documents into folders, upload files,
 and run natural-language searches that return the most relevant document chunks ranked by cosine
-similarity against OpenAI embeddings. There is no AI-generated answer yet; this version stops at
-"vector search → ranked results" by design (see [design.md](./.claude/technical-designs/design.md) §1, §6, §11, §20 for the
-full rationale and the documented future RAG phase).
+similarity against OpenAI embeddings. Search returns ranked passages; an **Ask** mode on top streams a short, cited, AI-written answer grounded only in
+the retrieved passages (RAG — see [rag.md](./.claude/technical-designs/rag.md); the original deliberate stop at
+"vector search → ranked results" is in [design.md](./.claude/technical-designs/design.md) §1, §6, §11, §20).
 
 It's a monorepo with two components:
 
@@ -55,6 +55,8 @@ dependencies (no OpenAI SDK, no ASP.NET, no disk I/O). Key pieces:
   breadcrumbs and search result folder-path display)
 - `Documents/DocumentService` (upload → validate → save → dispatch background processing),
   `Documents/TextChunker` (configurable chunk size/overlap)
+- `Rag/` (`AnswerService`, `AnswerRun`, `AnswerStreamProcessor`, `PromptBuilder`, `QuestionRewriter`, `ContextSelector`,
+  `CitationParser`, `AskRequestValidator`), `Settings/AppSettingsService`, `Interfaces/IChatCompletionService`
 - `Search/SearchService` (resolves scope → folder ids, embeds the query, calls `IVectorSearchRepository`).
   `Search/CosineSimilarity` is **obsolete** (superseded by pgvector) and unused — kept for reference.
 - `Interfaces/` — repository and service abstractions (`IFolderRepository`,
@@ -83,6 +85,7 @@ filesystem, or a specific persistence mechanism.
 - `TextExtraction/` — `PdfTextExtractor` (PdfPig), `DocxTextExtractor` (DocumentFormat.OpenXml),
   `XlsxTextExtractor` (ClosedXML), `PlainTextExtractor` (.txt/.csv), resolved by
   `TextExtractionService` via `IEnumerable<ITextExtractor>` + `CanHandle(extension)`.
+- `AI/OpenAIChatCompletionService` — wraps `ChatClient` (lazy, like the embedding service); maps SDK failures to `AnswerGenerationException`.
 - `AI/OpenAIEmbeddingService` — wraps the official OpenAI .NET SDK (`OpenAI.Embeddings.EmbeddingClient`).
   Lazily constructs the SDK client so a missing API key doesn't crash startup — it only throws
   (with a message caught and turned into a safe user-facing error) when an embedding is actually
@@ -144,8 +147,23 @@ page/sheet and overlap does not carry across the boundary. At most one of the tw
 `CK_DocumentChunks_PageOrSheet`). DOCX has no location (no reliable page boundaries); documents uploaded before
 these changes have nulls — re-upload to populate.
 
-Similarity/ranking/top-K run in PostgreSQL via pgvector — the OpenAI SDK is used **only** to generate
-embeddings (no Semantic Kernel, no LangChain, no RAG answer generation yet).
+Similarity/ranking/top-K run in PostgreSQL via pgvector. The OpenAI SDK is used for embeddings and, in the Ask flow,
+for chat completions (no Semantic Kernel, no LangChain).
+
+### Ask (RAG) flow
+
+`POST /api/answers/stream` → `AnswerService.StartAsync` (validate → rewrite follow-up to a standalone question if there
+is history → `ISearchService` overload with `SearchTuning(Rag:MaxContextChunks, Rag:MinSimilarity)` → `ContextSelector`
+numbers sources 1..N) then `AnswerRun.StreamAsync` (no sources ⇒ `notfound`, no LLM call; otherwise
+`IChatCompletionService.StreamAsync` through `AnswerStreamProcessor`, which detects the leading `NOT_FOUND` sentinel and
+validates `[n]` citations). Everything that can fail with an HTTP status happens in `StartAsync`, before the first SSE
+byte (ProblemDetails via the middleware: 400/404/502/503); later failures are an `error` event. The Application layer
+yields `AnswerEvent`s; only `AnswersController` + `Streaming/SseWriter` know about HTTP/SSE. The conversation lives in
+the browser (`useAsk`) and is sent as `history` each request; the server is stateless and never logs questions,
+chunks, prompts or answers. Answers are rendered as plain text (no Markdown). `/api/answers` is rate-limited per IP
+(sliding window + concurrent-stream cap, `Rag:RateLimit`); `GET /api/settings` exposes only client-safe limits.
+`Rag:Temperature` / `Rag:MaxOutputTokens` are sent to the model only when set. **Phase 0 (real-model compatibility
+spike for `OpenAI:ChatModel`) and Phase 6 manual QA have not been run** — see rag.md §16.
 
 ### Frontend architecture
 
@@ -159,7 +177,7 @@ citadel-iq-ui/src/
  │   ├─ upload/     UploadDialog, UploadDropzone
  │   ├─ search/     SearchPanel, SearchScopeSelector, SearchInput, SearchResults, SearchResultCard
  │   └─ common/      EmptyState, LoadingState, ToastProvider, ConfirmDialog, GlassSurface,
- │                    IconBadge, SectionHeader, SearchInfoPanel
+ │                    IconBadge, SectionHeader, AssistantInfoPanel
  ├─ hooks/          useFolderContents, useCreateFolder, useRenameFolder, useDeleteFolder,
  │                   useDeleteDocument, useUpload, useSearch
  ├─ api/            apiClient (fetch wrapper + ApiError), foldersApi, documentsApi, searchApi
@@ -167,6 +185,13 @@ citadel-iq-ui/src/
  ├─ types/          folder.ts, search.ts — hand-kept in sync with backend DTOs
  └─ utils/          highlightMatches.tsx — best-effort literal term highlighting in search snippets
 ```
+
+**Ask UI**: `SearchPanel` is the drawer shell with an **Ask | Passages only** toggle (Ask is hidden when
+`GET /api/settings` says `askEnabled: false`; `SettingsProvider` fetches once). `hooks/useAsk` holds the whole
+conversation, builds `history` (answered + "not found" turns; error/aborted turns omitted), enforces the session limit
+and aborts the stream on close/new session; `api/sse.ts` is the `fetch`-based SSE client. `components/ask/` renders
+question → answer (`AnswerText`: plain text, valid `[n]` markers as chips, invalid dropped) → `SourceList` (cited cards
+built on `SearchResultCard` with a Download button; others collapsed).
 
 **Visual design — glassmorphism**: a diagonal gradient page background (`theme/glass.ts`'s
 `glossyBackground(mode)` — a fixed palette in dark mode, a pastel equivalent in light mode) with
@@ -198,8 +223,8 @@ lightened for dark mode via `theme/glass.ts`'s `folderAccentColor(theme)` (`#433
 `ConfirmDialog`'s confirm button use `theme.palette.error.main`. Deliberately three distinct hues
 (green / indigo / red) so same-row actions don't blend together.
 
-**Persistent sidebar** (`components/common/SearchInfoPanel.tsx`, mounted once in `AppShell`, not
-per-page): an evergreen "how search works" panel — copy is deliberately *not* a one-time "Welcome"
+**Persistent sidebar** (`components/common/AssistantInfoPanel.tsx`, mounted once in `AppShell`, not
+per-page): an evergreen "ask your documents, get cited answers" (RAG) panel — copy is deliberately *not* a one-time "Welcome"
 message, since it's always visible, never remounts on navigation. It's a genuine CSS Grid column
 (`AppShell`'s root `display: grid`, `gridTemplateColumns: '300px 1fr'` from `md` up), `position:
 sticky` so it stays in view while scrolling, and `display: none` below `md` — there's no good place
@@ -323,6 +348,11 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 | `Chunking` | `ChunkSize` / `ChunkOverlap` | `400` / `80` (tuned down from `800`/`150` — smaller chunks discriminate better between topically-similar documents) | Characters per chunk / overlap |
 | `Search` | `DefaultTopK` / `MaxTopK` | `10` / `50` | Result count defaults/caps |
 | `Search` | `MinSimilarity` | `0.25` | Minimum cosine similarity for a result (0 = off); untuned starting value, override via user-secrets |
+| `OpenAI` | `ChatModel` | `gpt-5.6-luna` | Chat model for answers/rewrites (unverified — Phase 0) |
+| `Rag` | `Enabled`, `MaxContextChunks`/`Cap`, `MaxContextChars`, `MinSimilarity` | `true`, `8`/`12`, `8000`, `0.30` | Kill switch (503), context size, answer similarity floor (untuned) |
+| `Rag` | `MaxQuestionLength`, `MaxHistoryTurns`, `MaxHistoryChars`, `RewriteAnswerExcerptChars` | `1000`, `10`, `12000`, `500` | Hard input limits (server rejects, never truncates) |
+| `Rag` | `MaxOutputTokens`, `Temperature` | unset | Sent to the model only when set |
+| `Rag:RateLimit` | `PermitLimit`/`WindowSeconds`/`MaxConcurrentStreams` | `20`/`60`/`2` | Per-IP limits on `/api/answers` |
 | `Storage` | `DocumentsPath` | `App_Data/documents` | Relative to `IHostEnvironment.ContentRootPath` — resolved once at host startup, not `Directory.GetCurrentDirectory()` (which depends on how the process was launched) |
 
 ## API contract
@@ -339,6 +369,8 @@ GET    /api/documents/{documentId}/status   # { id, status, failureReason }
 GET    /api/documents/{documentId}/download # streams original file, original filename
 DELETE /api/documents/{documentId}          # removes stored file, chunks, and embeddings
 POST   /api/search                          # { query, currentFolderId, searchScope, topK? }
+POST   /api/answers/stream                  # SSE: question, sources, text*, [notfound], done | error — body { question, currentFolderId, searchScope, history[] }
+GET    /api/settings                        # client-safe limits: askEnabled, maxQuestionLength, maxHistoryTurns, maxHistoryChars
 GET    /health
 ```
 
@@ -371,12 +403,12 @@ converter registered in `Program.cs`), e.g. `"searchScope": "CurrentFolderAndSub
    generic 500 message.
 6. Async everywhere for I/O — file processing and OpenAI calls.
 7. No video uploads, no separate vector database (pgvector inside PostgreSQL is the vector store), no
-   Semantic Kernel, no LangChain, no RAG answer-generation — these are documented future phases, not oversights.
+   Semantic Kernel, no LangChain, no RAG answer *persistence*/server-side conversations/Markdown rendering — these are documented future phases, not oversights.
 
 ## Out of scope for this version
 
 Authentication/authorization, per-user document spaces,
-RAG/LLM-generated answers, search history/pagination, hybrid keyword search, file rename, move,
+server-side conversation history, search history/pagination, hybrid keyword search, file rename, move,
 bulk operations, document previews, audit logging, background job queues (the current dispatcher
 is in-process fire-and-forget, not a persistent queue). See [design.md](./.claude/technical-designs/design.md) §9 and §21 for the
 full future-enhancements list and the reasoning behind each deferral. (Folder *rename* and
@@ -391,7 +423,7 @@ above.)
   repositories/services: migrations, upload→process, page/sheet locations, failure cleanup, vector search ranking,
   scopes, `MinSimilarity`, Ready-only search, folder uniqueness (incl. concurrent creates) and cascade delete.
   Only OpenAI (`FakeEmbeddingService`, deterministic topic-axis vectors) and the background dispatcher (no-op;
-  tests call `ProcessDocumentAsync`) are replaced. No API-level (HTTP) tests and no frontend tests yet.
+  tests call `ProcessDocumentAsync`) are replaced. `Integration/AnswersApiTests` drive the real pipeline through `WebApplicationFactory` (SSE framing/order, error events, 400/404/503/429, settings) with `FakeChatCompletionService`; `Unit/RagUnitTests` cover the RAG pieces. No frontend tests yet.
 - **Obsolete-but-kept code:** `InMemory*Repository` classes and `CosineSimilarity` are marked `[Obsolete]`,
   not registered in DI, and kept on purpose — don't delete them or wire them back in.
 - **Stop hook** (`.claude/hooks/kill-stale-backend.sh`): kills the backend on `:5157` at the end of a turn only if

@@ -5,7 +5,7 @@ import { TopNavigation } from './TopNavigation';
 import { Footer } from './Footer';
 import { FloatingShapes } from './FloatingShapes';
 import { SearchPanel } from '../components/search/SearchPanel';
-import { SearchInfoPanel } from '../components/common/SearchInfoPanel';
+import { AssistantInfoPanel } from '../components/common/AssistantInfoPanel';
 import { ROOT_FOLDER_ID } from '../constants';
 
 const CONTENT_MAX_WIDTH = 1320;
@@ -59,7 +59,7 @@ export function AppShell() {
           overflowY: 'auto',
         }}
       >
-        <SearchInfoPanel />
+        <AssistantInfoPanel />
       </Box>
 
       <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', position: 'relative' }}>

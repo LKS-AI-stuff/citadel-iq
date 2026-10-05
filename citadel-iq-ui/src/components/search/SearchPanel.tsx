@@ -1,10 +1,14 @@
-import { Box, Button, CircularProgress, Divider, Drawer, IconButton, Stack, Typography, Alert, alpha } from '@mui/material';
+import { useState } from 'react';
+import { Box, Button, CircularProgress, Divider, Drawer, IconButton, Stack, ToggleButton, ToggleButtonGroup, Typography, Alert, alpha } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
 import { SearchInput } from './SearchInput';
 import { SearchScopeSelector } from './SearchScopeSelector';
 import { SearchResults } from './SearchResults';
+import { AskPanel } from '../ask/AskPanel';
 import { useSearch } from '../../hooks/useSearch';
+import { useAsk } from '../../hooks/useAsk';
+import { useAppSettings } from '../../settings/useAppSettings';
 import { glossyBackground } from '../../theme/glass';
 
 interface SearchPanelProps {
@@ -16,12 +20,28 @@ interface SearchPanelProps {
 export function SearchPanel({ open, onClose, currentFolderId }: SearchPanelProps) {
   const { query, setQuery, scope, setScope, results, searchedQuery, isLoading, error, search, clear } =
     useSearch(currentFolderId);
+  const ask = useAsk(currentFolderId);
+  const { askEnabled } = useAppSettings();
+  const [chosenMode, setChosenMode] = useState<'ask' | 'passages'>('ask');
+  // When Ask is switched off on the server, only the passages view is available.
+  const mode = askEnabled ? chosenMode : 'passages';
+
+  // Closing the drawer stops any in-flight answer, so the server cancels generation.
+  const handleClose = () => {
+    ask.abort();
+    onClose();
+  };
+
+  const handleSearchInstead = (question: string) => {
+    setQuery(question);
+    setChosenMode('passages');
+  };
 
   return (
     <Drawer
       anchor="right"
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       slotProps={{
         paper: {
           sx: {
@@ -68,41 +88,66 @@ export function SearchPanel({ open, onClose, currentFolderId }: SearchPanelProps
               </Box>
               <Box>
                 <Typography variant="h6" sx={{ lineHeight: 1.15 }}>
-                  Semantic search
+                  {mode === 'ask' ? 'Ask your documents' : 'Semantic search'}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Ranked by meaning, not keywords
+                  {mode === 'ask' ? 'Answers are AI-generated from your documents' : 'Ranked by meaning, not keywords'}
                 </Typography>
               </Box>
             </Stack>
-            <IconButton onClick={onClose} aria-label="Close search">
+            <IconButton onClick={handleClose} aria-label="Close search">
               <CloseIcon />
             </IconButton>
           </Stack>
         </Box>
 
-        <Box sx={{ p: 3, pb: 2 }}>
-          <Stack spacing={2}>
-            <SearchInput value={query} onChange={setQuery} onSearch={search} onClear={clear} isLoading={isLoading} />
-            <SearchScopeSelector value={scope} onChange={setScope} />
-            <Button
-              variant="contained"
-              size="large"
-              onClick={search}
-              disabled={isLoading}
-              sx={{ background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)' }}
+        {askEnabled && (
+          <Box sx={{ px: 3, pt: 2 }}>
+            <ToggleButtonGroup
+              value={mode}
+              exclusive
+              fullWidth
+              size="small"
+              aria-label="Mode"
+              onChange={(_, next) => {
+                if (next) setChosenMode(next);
+              }}
+              sx={{ '& .MuiToggleButton-root': { textTransform: 'none', fontWeight: 600 } }}
             >
-              {isLoading ? <CircularProgress size={20} color="inherit" /> : 'Search'}
-            </Button>
-          </Stack>
-        </Box>
+              <ToggleButton value="ask">Ask</ToggleButton>
+              <ToggleButton value="passages">Passages only</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+        )}
 
-        <Divider />
+        {mode === 'ask' ? (
+          <AskPanel ask={ask} onSearchInstead={handleSearchInstead} />
+        ) : (
+          <>
+            <Box sx={{ p: 3, pb: 2 }}>
+              <Stack spacing={2}>
+                <SearchInput value={query} onChange={setQuery} onSearch={search} onClear={clear} isLoading={isLoading} />
+                <SearchScopeSelector value={scope} onChange={setScope} />
+                <Button
+                  variant="contained"
+                  size="large"
+                  onClick={search}
+                  disabled={isLoading}
+                  sx={{ background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)' }}
+                >
+                  {isLoading ? <CircularProgress size={20} color="inherit" /> : 'Search'}
+                </Button>
+              </Stack>
+            </Box>
 
-        <Box sx={{ flex: 1, overflowY: 'auto', p: 3, pt: 2 }}>
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          {results && <SearchResults results={results} query={searchedQuery} />}
-        </Box>
+            <Divider />
+
+            <Box sx={{ flex: 1, overflowY: 'auto', p: 3, pt: 2 }}>
+              {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+              {results && <SearchResults results={results} query={searchedQuery} />}
+            </Box>
+          </>
+        )}
       </Box>
     </Drawer>
   );

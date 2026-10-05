@@ -17,7 +17,13 @@ public class SearchService(
     IOptions<SearchOptions> searchOptions,
     ILogger<SearchService> logger) : ISearchService
 {
-    public async Task<IReadOnlyList<SearchResultDto>> SearchAsync(SearchRequestDto request, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<SearchResultDto>> SearchAsync(SearchRequestDto request, CancellationToken cancellationToken = default) =>
+        SearchAsync(
+            request,
+            new SearchTuning(ResolveTopK(request.TopK), searchOptions.Value.MinSimilarity),
+            cancellationToken);
+
+    public async Task<IReadOnlyList<SearchResultDto>> SearchAsync(SearchRequestDto request, SearchTuning tuning, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.Query))
         {
@@ -30,8 +36,8 @@ public class SearchService(
         // Scope resolution (including walking the folder tree) stays here; the repository only
         // receives the resolved folder-id filter.
         var eligibleFolderIds = await ResolveEligibleFolderIdsAsync(request, cancellationToken);
-        var topK = ResolveTopK(request.TopK);
-        var minSimilarity = Math.Clamp(searchOptions.Value.MinSimilarity, 0d, 1d);
+        var topK = tuning.TopK;
+        var minSimilarity = Math.Clamp(tuning.MinSimilarity, 0d, 1d);
 
         logger.LogInformation("Vector search started (scope {Scope}, topK {TopK}, minSimilarity {MinSimilarity})", request.SearchScope, topK, minSimilarity);
 

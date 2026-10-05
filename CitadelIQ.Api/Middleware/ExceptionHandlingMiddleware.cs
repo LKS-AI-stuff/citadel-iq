@@ -25,6 +25,9 @@ public class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Exception
                 NotFoundException => (StatusCodes.Status404NotFound, ex.Message),
                 ValidationException => (StatusCodes.Status400BadRequest, ex.Message),
                 DomainException => (StatusCodes.Status400BadRequest, ex.Message),
+                BadHttpRequestException bad => (bad.StatusCode, bad.StatusCode == StatusCodes.Status413PayloadTooLarge ? "The request is too large." : "The request could not be read."),
+                FeatureDisabledException => (StatusCodes.Status503ServiceUnavailable, ex.Message),
+                AnswerGenerationException => (StatusCodes.Status502BadGateway, ex.Message),
                 _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred. Please try again.")
             };
 
@@ -42,7 +45,7 @@ public class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Exception
                 Title = title
             };
 
-            await context.Response.WriteAsJsonAsync(problemDetails);
+            await context.Response.WriteAsJsonAsync(problemDetails, options: null, contentType: "application/problem+json");
         }
     }
 }

@@ -4,15 +4,18 @@ import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 import { ColorModeProvider } from './theme/ColorModeProvider';
 import { ToastProvider } from './components/common/ToastProvider';
+import { SettingsProvider } from './settings/SettingsProvider';
 import App from './App.tsx';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ColorModeProvider>
       <ToastProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <SettingsProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </SettingsProvider>
       </ToastProvider>
     </ColorModeProvider>
   </StrictMode>,

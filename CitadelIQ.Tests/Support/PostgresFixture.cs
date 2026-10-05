@@ -12,8 +12,8 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     public async Task DisposeAsync() => await _container.DisposeAsync();
 
-    public Task<TestApp> CreateAppAsync(double minSimilarity = 0.25, int chunkSize = 400, int chunkOverlap = 80) =>
-        TestApp.CreateAsync(_container.GetConnectionString(), minSimilarity, chunkSize, chunkOverlap);
+    public Task<TestApp> CreateAppAsync(double minSimilarity = 0.25, int chunkSize = 400, int chunkOverlap = 80, double ragMinSimilarity = 0.30) =>
+        TestApp.CreateAsync(_container.GetConnectionString(), minSimilarity, chunkSize, chunkOverlap, ragMinSimilarity);
 }
 
 [CollectionDefinition(Name)]

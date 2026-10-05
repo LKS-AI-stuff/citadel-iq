@@ -284,6 +284,15 @@ by cosine distance in SQL and returns the top-K (see
 [postgresql-pgvector.md](./.claude/technical-designs/postgresql-pgvector.md); authentication and RAG are
 designed for, but intentionally not built in this version).
 
+## 💬 Ask (answers from your documents)
+
+The search drawer's **Ask** mode streams a short answer written only from your documents, with numbered citations
+that link to the exact passages (each source card can download the original file). Follow-up questions work within a
+session; the conversation is kept in the browser only. Configure via `OpenAI:ChatModel` and the `Rag` section
+(limits, kill switch `Rag:Enabled`, per-IP rate limits) — see `CLAUDE.md` for the table. **Privacy:** the question,
+recent turns and the most relevant passages are sent to OpenAI; nothing is stored server-side and questions/answers
+are never logged. Set a monthly spend limit in the OpenAI dashboard.
+
 ## 🔐 Security notes
 
 - OpenAI API key lives in `dotnet user-secrets`, never in source or sent to the frontend.

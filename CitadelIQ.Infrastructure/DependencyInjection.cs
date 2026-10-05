@@ -46,6 +46,7 @@ public static class DependencyInjection
 
         services.AddSingleton<IFileValidator, FileValidator>();
         services.AddSingleton<IOpenAIEmbeddingService, OpenAIEmbeddingService>();
+        services.AddSingleton<IChatCompletionService, OpenAIChatCompletionService>();
         services.AddSingleton<IDocumentProcessingDispatcher, BackgroundDocumentProcessingDispatcher>();
 
         return services;

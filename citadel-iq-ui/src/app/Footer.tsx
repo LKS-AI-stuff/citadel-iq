@@ -19,7 +19,7 @@ export function Footer({ onHomeClick, onSearchClick }: FooterProps) {
             Home
           </Link>
           <Link component="button" underline="hover" color="text.secondary" onClick={onSearchClick} sx={{ fontSize: 14, fontWeight: 600 }}>
-            Semantic search (⌘K)
+            Ask your documents (⌘K)
           </Link>
           <Link
             underline="hover"

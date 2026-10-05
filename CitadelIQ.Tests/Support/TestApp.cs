@@ -4,6 +4,7 @@ using CitadelIQ.Application.Dtos;
 using CitadelIQ.Application.Folders;
 using CitadelIQ.Application.Interfaces;
 using CitadelIQ.Application.Options;
+using CitadelIQ.Application.Rag;
 using CitadelIQ.Application.Search;
 using CitadelIQ.Domain.Entities;
 using CitadelIQ.Domain.Enums;
@@ -29,18 +30,20 @@ public sealed class TestApp : IAsyncDisposable
     private readonly string _contentRoot;
 
     public FakeEmbeddingService Embeddings { get; }
+    public FakeChatCompletionService Chat { get; }
     public string ConnectionString { get; }
     public string DocumentsDirectory => Path.Combine(_contentRoot, "documents");
 
-    private TestApp(ServiceProvider services, FakeEmbeddingService embeddings, string connectionString, string contentRoot)
+    private TestApp(ServiceProvider services, FakeEmbeddingService embeddings, FakeChatCompletionService chat, string connectionString, string contentRoot)
     {
         _services = services;
         Embeddings = embeddings;
+        Chat = chat;
         ConnectionString = connectionString;
         _contentRoot = contentRoot;
     }
 
-    public static async Task<TestApp> CreateAsync(string adminConnectionString, double minSimilarity = 0.25, int chunkSize = 400, int chunkOverlap = 80)
+    public static async Task<TestApp> CreateAsync(string adminConnectionString, double minSimilarity = 0.25, int chunkSize = 400, int chunkOverlap = 80, double ragMinSimilarity = 0.30)
     {
         var databaseName = $"t_{Guid.NewGuid():N}";
         await using (var admin = new NpgsqlConnection(adminConnectionString))
@@ -55,6 +58,7 @@ public sealed class TestApp : IAsyncDisposable
         Directory.CreateDirectory(contentRoot);
 
         var embeddings = new FakeEmbeddingService();
+        var chat = new FakeChatCompletionService();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:CitadelIQ"] = connectionString })
             .Build();
@@ -67,18 +71,20 @@ public sealed class TestApp : IAsyncDisposable
         services.Configure<StorageOptions>(o => o.DocumentsPath = "documents");
         services.Configure<ChunkingOptions>(o => { o.ChunkSize = chunkSize; o.ChunkOverlap = chunkOverlap; });
         services.Configure<SearchOptions>(o => o.MinSimilarity = minSimilarity);
+        services.Configure<RagOptions>(o => o.MinSimilarity = ragMinSimilarity);
         services.AddApplication();
         services.AddInfrastructure(config);
         services.AddFluentMigrations(connectionString);
 
         // Replace OpenAI and the fire-and-forget dispatcher (last registration wins).
         services.AddSingleton<IOpenAIEmbeddingService>(embeddings);
+        services.AddSingleton<IChatCompletionService>(chat);
         services.AddSingleton<IDocumentProcessingDispatcher, NoOpDispatcher>();
 
         var provider = services.BuildServiceProvider();
         provider.ApplyDatabaseMigrations();
 
-        return new TestApp(provider, embeddings, connectionString, contentRoot);
+        return new TestApp(provider, embeddings, chat, connectionString, contentRoot);
     }
 
     public async Task<T> RunAsync<T>(Func<IServiceProvider, Task<T>> action)
@@ -118,6 +124,22 @@ public sealed class TestApp : IAsyncDisposable
 
     public Task<IReadOnlyList<SearchResultDto>> SearchAsync(string query, Guid folderId, SearchScope scope, int? topK = null) =>
         RunAsync(sp => sp.GetRequiredService<ISearchService>().SearchAsync(new SearchRequestDto(query, folderId, scope, topK)));
+
+    public async Task<(AnswerRun Run, List<AnswerEvent> Events)> AskAsync(AskRequestDto request)
+    {
+        var events = new List<AnswerEvent>();
+        var run = await RunAsync(async sp =>
+        {
+            var r = await sp.GetRequiredService<IAnswerService>().StartAsync(request);
+            await foreach (var e in r.StreamAsync())
+            {
+                events.Add(e);
+            }
+
+            return r;
+        });
+        return (run, events);
+    }
 
     // ---- Raw SQL helpers (inspect what is really in the database) ----
 

@@ -1,15 +1,24 @@
-import { Box, Chip, LinearProgress, Stack, Tooltip, Typography, alpha, useTheme } from '@mui/material';
+import { Box, ButtonBase, Chip, IconButton, LinearProgress, Stack, Tooltip, Typography, alpha, useTheme } from '@mui/material';
+import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
 import { FileIcon } from '../documents/FileIcon';
 import { GlassSurface } from '../common/GlassSurface';
 import { IconBadge } from '../common/IconBadge';
+import { actionIconButtonSx } from '../../theme/glass';
 import { highlightMatches } from '../../utils/highlightMatches';
 import type { SearchResultDto } from '../../types/search';
 
 interface SearchResultCardProps {
   result: SearchResultDto;
   query: string;
-  rank: number;
+  /** Position in a ranked results list; ignored when `citationNumber` is given. */
+  rank?: number;
   animationDelayMs?: number;
+  /** Set when the card is an answer source: shows `[n]` instead of the rank. */
+  citationNumber?: number;
+  /** Briefly emphasises the card (e.g. after clicking its citation chip). */
+  highlighted?: boolean;
+  /** When given, the file badge and a Download button call it. */
+  onDownload?: () => void;
 }
 
 function similarityColor(score: number): 'success' | 'warning' | 'inherit' {
@@ -18,10 +27,33 @@ function similarityColor(score: number): 'success' | 'warning' | 'inherit' {
   return 'inherit';
 }
 
-export function SearchResultCard({ result, query, rank, animationDelayMs = 0 }: SearchResultCardProps) {
+export function SearchResultCard({
+  result,
+  query,
+  rank,
+  animationDelayMs = 0,
+  citationNumber,
+  highlighted = false,
+  onDownload,
+}: SearchResultCardProps) {
   const theme = useTheme();
   const accentColor = theme.palette.success.main;
   const scorePercent = Math.max(0, Math.min(1, result.similarityScore)) * 100;
+
+  const badgeContent = (
+    <IconBadge color={accentColor} size={32}>
+      <FileIcon fileName={result.fileName} sx={{ fontSize: 16, color: accentColor }} />
+    </IconBadge>
+  );
+  const badge = onDownload ? (
+    <Tooltip title="Download original file">
+      <ButtonBase onClick={onDownload} aria-label={`Download ${result.fileName}`} sx={{ borderRadius: '12px' }}>
+        {badgeContent}
+      </ButtonBase>
+    </Tooltip>
+  ) : (
+    badgeContent
+  );
 
   return (
     <GlassSurface
@@ -31,6 +63,8 @@ export function SearchResultCard({ result, query, rank, animationDelayMs = 0 }: 
       sx={{
         p: 2,
         animationDelay: `${animationDelayMs}ms`,
+        transition: 'box-shadow 0.3s ease',
+        boxShadow: highlighted ? (t) => `0 0 0 2px ${t.palette.primary.main}` : undefined,
       }}
     >
       <Stack direction="row" sx={{ alignItems: 'flex-start', gap: 1.25, mb: 1 }}>
@@ -43,11 +77,9 @@ export function SearchResultCard({ result, query, rank, animationDelayMs = 0 }: 
             mt: 0.4,
           }}
         >
-          #{rank}
+          {citationNumber != null ? `[${citationNumber}]` : `#${rank}`}
         </Typography>
-        <IconBadge color={accentColor} size={32}>
-          <FileIcon fileName={result.fileName} sx={{ fontSize: 16, color: accentColor }} />
-        </IconBadge>
+        {badge}
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography variant="subtitle2" noWrap sx={{ fontWeight: 700 }}>
             {result.fileName}
@@ -56,6 +88,13 @@ export function SearchResultCard({ result, query, rank, animationDelayMs = 0 }: 
             {result.folderPath}
           </Typography>
         </Box>
+        {onDownload && (
+          <Tooltip title="Download">
+            <IconButton size="small" onClick={onDownload} aria-label="Download" sx={actionIconButtonSx(accentColor)}>
+              <DownloadOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
       </Stack>
 
       <Typography

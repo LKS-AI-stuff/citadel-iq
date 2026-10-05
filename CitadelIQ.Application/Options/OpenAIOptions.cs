@@ -10,4 +10,8 @@ public class OpenAIOptions
     /// <summary>Vector size of <see cref="EmbeddingModel"/> (1536 for text-embedding-3-small). Sizes the
     /// pgvector column, so changing it requires a new migration and re-embedding.</summary>
     public int EmbeddingDimension { get; set; } = 1536;
+
+    /// <summary>Chat model used to write answers and rewrite follow-up questions. Not a secret; overridable via
+    /// user-secrets or <c>OpenAI__ChatModel</c>.</summary>
+    public string ChatModel { get; set; } = "gpt-5.6-luna";
 }

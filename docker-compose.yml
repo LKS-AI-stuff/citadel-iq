@@ -30,6 +30,11 @@ services:
       ConnectionStrings__CitadelIQ: Host=db;Port=5432;Database=citadeliq;Username=citadeliq;Password=${POSTGRES_PASSWORD}
       OpenAI__ApiKey: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
       OpenAI__EmbeddingModel: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      OpenAI__ChatModel: ${OPENAI_CHAT_MODEL:-gpt-5.6-luna}
+      Rag__Enabled: ${RAG_ENABLED:-true}
+      Rag__RateLimit__PermitLimit: ${RAG_RATE_LIMIT_PERMITS:-20}
+      Rag__RateLimit__WindowSeconds: ${RAG_RATE_LIMIT_WINDOW_SECONDS:-60}
+      Rag__RateLimit__MaxConcurrentStreams: ${RAG_MAX_CONCURRENT_STREAMS:-2}
       Cors__AllowedOrigins__0: ${UI_ORIGIN:-http://localhost:8080}
       Search__MinSimilarity: ${SEARCH_MIN_SIMILARITY:-0.25}
       Database__MigrateOnStartup: "true"
