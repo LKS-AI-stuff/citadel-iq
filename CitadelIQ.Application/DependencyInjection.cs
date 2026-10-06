@@ -28,6 +28,7 @@ public static class DependencyInjection
         services.AddSingleton<AnswerStreamProcessor>();
         services.AddSingleton<IAppSettingsService, AppSettingsService>();
         services.AddSingleton<IValidateOptions<RagOptions>, RagOptionsValidator>();
+        services.AddSingleton<IValidateOptions<StorageOptions>, StorageOptionsValidator>();
         return services;
     }
 }

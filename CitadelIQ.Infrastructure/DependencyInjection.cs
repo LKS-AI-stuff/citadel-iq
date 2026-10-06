@@ -1,4 +1,5 @@
 using CitadelIQ.Application.Interfaces;
+using CitadelIQ.Application.Options;
 using CitadelIQ.Infrastructure.AI;
 using CitadelIQ.Infrastructure.Persistence;
 using CitadelIQ.Infrastructure.Processing;
@@ -35,8 +36,23 @@ public static class DependencyInjection
         services.AddScoped<IEmbeddingRepository, EmbeddingRepository>();
         services.AddScoped<IVectorSearchRepository, VectorSearchRepository>();
 
-        // Raw file bytes on local disk (App_Data/), not RAM and not bin/ — see PLAN.md §3.
-        services.AddSingleton<IDocumentStorage, LocalDiskDocumentStorage>();
+        // Raw file bytes: local disk (App_Data/, not RAM and not bin/ — see PLAN.md §3) or Azure Blob Storage,
+        // chosen by Storage:Provider. Unknown values fail fast at startup.
+        var storageProvider = configuration["Storage:Provider"] ?? StorageOptions.LocalDiskProvider;
+        switch (storageProvider)
+        {
+            case StorageOptions.LocalDiskProvider:
+                services.AddSingleton<IDocumentStorage, LocalDiskDocumentStorage>();
+                break;
+            case StorageOptions.AzureBlobProvider:
+                services.AddSingleton<AzureBlobDocumentStorage>();
+                services.AddSingleton<IDocumentStorage>(sp => sp.GetRequiredService<AzureBlobDocumentStorage>());
+                services.AddSingleton<IStorageProbe>(sp => sp.GetRequiredService<AzureBlobDocumentStorage>());
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Storage:Provider '{storageProvider}' is not supported. Use '{StorageOptions.LocalDiskProvider}' or '{StorageOptions.AzureBlobProvider}'.");
+        }
 
         services.AddSingleton<ITextExtractor, PdfTextExtractor>();
         services.AddSingleton<ITextExtractor, DocxTextExtractor>();

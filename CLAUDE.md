@@ -30,7 +30,7 @@ reasoning, so a change that looks like an obvious improvement may already be a d
 React UI (Vite) ←→ ASP.NET Core API ←→ OpenAI Embeddings API
                           │
                           ├── PostgreSQL + pgvector (folders, documents, chunks, embeddings)
-                          └── Local disk (App_Data/documents) for raw uploaded file bytes
+                          └── Raw uploaded file bytes: local disk (App_Data/documents) or Azure Blob Storage (Storage:Provider)
 ```
 
 ### Backend — Clean Architecture
@@ -79,7 +79,12 @@ filesystem, or a specific persistence mechanism.
   `(ParentFolderId, lower(Name))` index lives in the migration; `FolderRepository` translates its
   violation into the usual "already exists" `ValidationException`. DbContext is scoped, so each background
   processing task (own DI scope) gets its own.
-- `Storage/LocalDiskDocumentStorage` — raw file bytes go to `App_Data/documents/` (configurable
+- `Storage/AzureBlobDocumentStorage` — alternative `IDocumentStorage` (`Storage:Provider=AzureBlob`): blobs named
+  `{documentId}{extension}` in a private container; auth is the connection string if set, otherwise
+  `DefaultAzureCredential` (managed identity / `az login`) against `https://{AccountName}.blob.core.windows.net`.
+  Account and container names are config. Lazy client, seekable read stream, idempotent delete, 404 → `FileNotFoundException`.
+  Also implements `IStorageProbe` (used by `GET /health/storage`). Design: [azure-blob-storage.md](./.claude/technical-designs/azure-blob-storage.md).
+- `Storage/LocalDiskDocumentStorage` — (default provider) raw file bytes go to `App_Data/documents/` (configurable
   via `Storage:DocumentsPath`), **not** `bin/` (which `dotnet build`/`clean` wipes) and **not**
   RAM (see .claude/technical-designs/design.md §3 for the reasoning: keeps memory pressure off large uploads).
 - `TextExtraction/` — `PdfTextExtractor` (PdfPig), `DocxTextExtractor` (DocumentFormat.OpenXml),
@@ -283,6 +288,15 @@ Development the API applies FluentMigrator migrations on startup. Set the connec
 dotnet user-secrets set "ConnectionStrings:CitadelIQ" "Host=localhost;Port=5432;Database=citadeliq;Username=postgres;Password=..."
 ```
 
+**Azure Blob Storage (optional)** instead of local disk:
+```bash
+dotnet user-secrets set "Storage:Provider" "AzureBlob"
+dotnet user-secrets set "Storage:AzureBlob:AccountName" "<account>"
+dotnet user-secrets set "Storage:AzureBlob:ContainerName" "documents"
+dotnet user-secrets set "Storage:AzureBlob:ConnectionString" "<from the portal>"   # or omit and use `az login` / managed identity
+```
+Create the storage account and a **private** container once (portal or `az`); files already on local disk are not migrated.
+
 **Required secrets** (never in `appsettings.json` — that file is committed to git):
 ```bash
 dotnet user-secrets set "OpenAI:ApiKey" "sk-..."
@@ -310,7 +324,7 @@ the API (`CitadelIQ.Api/Dockerfile`, build context = repo root) and the UI (`cit
 nginx). Copy `.env.example` to `.env` (`POSTGRES_PASSWORD`, `OPENAI_API_KEY`, optional `OPENAI_EMBEDDING_MODEL`,
 `PUBLIC_API_URL`, `UI_ORIGIN`). The API receives `ConnectionStrings__CitadelIQ`, `OpenAI__ApiKey`,
 `Cors__AllowedOrigins__0` and `Database__MigrateOnStartup=true` as environment variables; Postgres data and
-uploaded files persist in the `pgdata` and `documents` volumes (back up both together). `VITE_API_URL` is baked
+uploaded files persist in the `pgdata` and `documents` volumes (back up both together; with `Storage:Provider=AzureBlob` the files live in the blob container instead — back up the DB and enable soft delete/versioning on the container). `VITE_API_URL` is baked
 into the UI at build time. Postgres is not published to the host. The app has no auth: don't expose it publicly.
 These Docker files have not yet been built/run end-to-end.
 
@@ -353,6 +367,8 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 | `Rag` | `MaxQuestionLength`, `MaxHistoryTurns`, `MaxHistoryChars`, `RewriteAnswerExcerptChars` | `1000`, `10`, `12000`, `500` | Hard input limits (server rejects, never truncates) |
 | `Rag` | `MaxOutputTokens`, `Temperature` | unset | Sent to the model only when set |
 | `Rag:RateLimit` | `PermitLimit`/`WindowSeconds`/`MaxConcurrentStreams` | `20`/`60`/`2` | Per-IP limits on `/api/answers` |
+| `Storage` | `Provider` | `LocalDisk` | `LocalDisk` or `AzureBlob`; unknown values fail at startup |
+| `Storage:AzureBlob` | `AccountName`, `ContainerName`, `ServiceUri`, `CreateContainerIfMissing` | `""`, `documents`, unset, `false` | Account/container are config. `ConnectionString` is a **secret** (user-secrets / `Storage__AzureBlob__ConnectionString`), takes precedence over Entra ID |
 | `Storage` | `DocumentsPath` | `App_Data/documents` | Relative to `IHostEnvironment.ContentRootPath` — resolved once at host startup, not `Directory.GetCurrentDirectory()` (which depends on how the process was launched) |
 
 ## API contract
@@ -372,6 +388,7 @@ POST   /api/search                          # { query, currentFolderId, searchSc
 POST   /api/answers/stream                  # SSE: question, sources, text*, [notfound], done | error — body { question, currentFolderId, searchScope, history[] }
 GET    /api/settings                        # client-safe limits: askEnabled, maxQuestionLength, maxHistoryTurns, maxHistoryChars
 GET    /health
+GET    /health/storage                      # document-store reachability (503 if the Azure container is unreachable)
 ```
 
 `DELETE /api/folders/{folderId}` rejects the well-known root ("Home") folder with a 400. Folder

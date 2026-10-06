@@ -43,7 +43,7 @@ public sealed class TestApp : IAsyncDisposable
         _contentRoot = contentRoot;
     }
 
-    public static async Task<TestApp> CreateAsync(string adminConnectionString, double minSimilarity = 0.25, int chunkSize = 400, int chunkOverlap = 80, double ragMinSimilarity = 0.30)
+    public static async Task<TestApp> CreateAsync(string adminConnectionString, double minSimilarity = 0.25, int chunkSize = 400, int chunkOverlap = 80, double ragMinSimilarity = 0.30, Action<StorageOptions>? configureStorage = null, string storageProvider = StorageOptions.LocalDiskProvider)
     {
         var databaseName = $"t_{Guid.NewGuid():N}";
         await using (var admin = new NpgsqlConnection(adminConnectionString))
@@ -60,7 +60,7 @@ public sealed class TestApp : IAsyncDisposable
         var embeddings = new FakeEmbeddingService();
         var chat = new FakeChatCompletionService();
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:CitadelIQ"] = connectionString })
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:CitadelIQ"] = connectionString, ["Storage:Provider"] = storageProvider })
             .Build();
 
         var services = new ServiceCollection();
@@ -68,7 +68,12 @@ public sealed class TestApp : IAsyncDisposable
         services.AddSingleton<IHostEnvironment>(new TestHostEnvironment(contentRoot));
         services.Configure<UploadOptions>(_ => { });
         services.Configure<OpenAIOptions>(_ => { });
-        services.Configure<StorageOptions>(o => o.DocumentsPath = "documents");
+        services.Configure<StorageOptions>(o =>
+        {
+            o.DocumentsPath = "documents";
+            o.Provider = storageProvider;
+            configureStorage?.Invoke(o);
+        });
         services.Configure<ChunkingOptions>(o => { o.ChunkSize = chunkSize; o.ChunkOverlap = chunkOverlap; });
         services.Configure<SearchOptions>(o => o.MinSimilarity = minSimilarity);
         services.Configure<RagOptions>(o => o.MinSimilarity = ragMinSimilarity);

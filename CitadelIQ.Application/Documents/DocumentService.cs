@@ -46,8 +46,17 @@ public class DocumentService(
         }
         catch
         {
-            // Don't leave an orphaned file behind if the record couldn't be saved.
-            await documentStorage.DeleteAsync(document.Id, extension, CancellationToken.None);
+            // Don't leave an orphaned file behind if the record couldn't be saved. With a remote store this
+            // cleanup can fail too; log it and let the original exception propagate rather than replace it.
+            try
+            {
+                await documentStorage.DeleteAsync(document.Id, extension, CancellationToken.None);
+            }
+            catch (Exception cleanupEx)
+            {
+                logger.LogError("Could not remove stored file for document {DocumentId} after a failed save ({ExceptionType}); it is orphaned", document.Id, cleanupEx.GetType().Name);
+            }
+
             throw;
         }
 
@@ -168,7 +177,16 @@ public class DocumentService(
         foreach (var document in documents)
         {
             var extension = Path.GetExtension(document.FileName).ToLowerInvariant();
-            await documentStorage.DeleteAsync(document.Id, extension, cancellationToken);
+            try
+            {
+                await documentStorage.DeleteAsync(document.Id, extension, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A stuck blob must not strand the remaining documents (their chunks are already gone).
+                logger.LogError("Could not remove stored file for document {DocumentId} ({ExceptionType}); it is orphaned", document.Id, ex.GetType().Name);
+            }
+
             await documentRepository.DeleteAsync(document.Id, cancellationToken);
         }
     }

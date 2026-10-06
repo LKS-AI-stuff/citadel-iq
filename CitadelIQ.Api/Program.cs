@@ -20,7 +20,7 @@ builder.Services.Configure<UploadOptions>(builder.Configuration.GetSection("Uplo
 builder.Services.Configure<ChunkingOptions>(builder.Configuration.GetSection("Chunking"));
 builder.Services.Configure<SearchOptions>(builder.Configuration.GetSection("Search"));
 builder.Services.Configure<OpenAIOptions>(builder.Configuration.GetSection("OpenAI"));
-builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection("Storage"));
+builder.Services.AddOptions<StorageOptions>().Bind(builder.Configuration.GetSection("Storage")).ValidateOnStart();
 builder.Services.AddOptions<RagOptions>().Bind(builder.Configuration.GetSection("Rag")).ValidateOnStart();
 
 // Per-IP limits on /api/answers only: a request window plus a concurrent-stream cap (an SSE response holds its
@@ -133,6 +133,20 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+
+// Reachability of the document store; only remote providers (Azure Blob) implement the probe.
+app.MapGet("/health/storage", async (IServiceProvider services, CancellationToken cancellationToken) =>
+{
+    var probe = services.GetService<CitadelIQ.Application.Interfaces.IStorageProbe>();
+    if (probe is null)
+    {
+        return Results.Ok(new { status = "healthy", provider = StorageOptions.LocalDiskProvider });
+    }
+
+    return await probe.IsAvailableAsync(cancellationToken)
+        ? Results.Ok(new { status = "healthy", provider = StorageOptions.AzureBlobProvider })
+        : Results.Json(new { status = "unavailable", provider = StorageOptions.AzureBlobProvider }, statusCode: StatusCodes.Status503ServiceUnavailable);
+});
 
 app.Run();
 

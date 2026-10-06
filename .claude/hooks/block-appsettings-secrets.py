@@ -40,6 +40,15 @@ def main() -> None:
         )
         sys.exit(2)
 
+    if re.search(r"AccountKey=|SharedAccessSignature=|sig=[A-Za-z0-9%+/=]{20,}", content):
+        print(
+            f"Blocked: this write adds what looks like an Azure storage key/SAS to {file_path}. "
+            'Set Storage:AzureBlob:ConnectionString via `dotnet user-secrets` or the '
+            "Storage__AzureBlob__ConnectionString environment variable — never in appsettings.json.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     sys.exit(0)
 
 

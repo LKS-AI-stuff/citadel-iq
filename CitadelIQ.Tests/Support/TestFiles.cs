@@ -1,5 +1,8 @@
 using System.Text;
 using ClosedXML.Excel;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
 using UglyToad.PdfPig.Fonts.Standard14Fonts;
 using UglyToad.PdfPig.Writer;
 
@@ -26,6 +29,20 @@ public static class TestFiles
         }
 
         return builder.Build();
+    }
+
+    /// <summary>A DOCX with one paragraph per argument.</summary>
+    public static byte[] Docx(params string[] paragraphs)
+    {
+        using var stream = new MemoryStream();
+        using (var document = WordprocessingDocument.Create(stream, WordprocessingDocumentType.Document))
+        {
+            var main = document.AddMainDocumentPart();
+            main.Document = new Document(new Body(paragraphs.Select(p => new Paragraph(new Run(new Text(p))))));
+            main.Document.Save();
+        }
+
+        return stream.ToArray();
     }
 
     /// <summary>One worksheet per argument; a sheet with no cell texts stays empty.</summary>

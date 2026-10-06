@@ -35,6 +35,10 @@ services:
       Rag__RateLimit__PermitLimit: ${RAG_RATE_LIMIT_PERMITS:-20}
       Rag__RateLimit__WindowSeconds: ${RAG_RATE_LIMIT_WINDOW_SECONDS:-60}
       Rag__RateLimit__MaxConcurrentStreams: ${RAG_MAX_CONCURRENT_STREAMS:-2}
+      Storage__Provider: ${STORAGE_PROVIDER:-LocalDisk}
+      Storage__AzureBlob__AccountName: ${AZURE_STORAGE_ACCOUNT:-}
+      Storage__AzureBlob__ContainerName: ${AZURE_STORAGE_CONTAINER:-documents}
+      Storage__AzureBlob__ConnectionString: ${AZURE_STORAGE_CONNECTION_STRING:-}
       Cors__AllowedOrigins__0: ${UI_ORIGIN:-http://localhost:8080}
       Search__MinSimilarity: ${SEARCH_MIN_SIMILARITY:-0.25}
       Database__MigrateOnStartup: "true"

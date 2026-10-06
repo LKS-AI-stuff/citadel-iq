@@ -293,6 +293,71 @@ session; the conversation is kept in the browser only. Configure via `OpenAI:Cha
 recent turns and the most relevant passages are sent to OpenAI; nothing is stored server-side and questions/answers
 are never logged. Set a monthly spend limit in the OpenAI dashboard.
 
+## ☁️ Optional: Azure Blob Storage for files
+
+By default uploads are stored on local disk. To store them in Azure Blob Storage instead:
+
+**1. Create the resources once** (Azure CLI; storage account names must be 3–24 lowercase letters/digits and globally unique):
+
+```bash
+az login
+
+RG=rg-citadeliq
+LOCATION=eastus
+ACCOUNT=citadeliqdocs01      # change this
+CONTAINER=documents
+
+az group create --name $RG --location $LOCATION
+
+az storage account create --name $ACCOUNT --resource-group $RG --location $LOCATION \
+  --sku Standard_LRS --kind StorageV2 --allow-blob-public-access false --min-tls-version TLS1_2
+
+# Private container (no anonymous access)
+az storage container create --name $CONTAINER --account-name $ACCOUNT --auth-mode login --public-access off
+```
+
+If the container command is denied, grant yourself data access first (also needed to use `az login` auth from the app):
+
+```bash
+az role assignment create --role "Storage Blob Data Contributor" \
+  --assignee "$(az ad signed-in-user show --query id -o tsv)" \
+  --scope "$(az storage account show --name $ACCOUNT --resource-group $RG --query id -o tsv)"
+```
+
+**2. Configure the API** (run from `CitadelIQ.Api/`). Pick **one** authentication option:
+
+```bash
+cd CitadelIQ.Api
+dotnet user-secrets set "Storage:Provider" "AzureBlob"
+dotnet user-secrets set "Storage:AzureBlob:AccountName" "$ACCOUNT"
+dotnet user-secrets set "Storage:AzureBlob:ContainerName" "$CONTAINER"
+
+# Option A: connection string (simplest for local dev; takes precedence if set)
+dotnet user-secrets set "Storage:AzureBlob:ConnectionString" "$(az storage account show-connection-string --name $ACCOUNT --resource-group $RG --query connectionString -o tsv)"
+
+# Option B: no secret — skip the line above and rely on `az login` (needs the role assignment above);
+# in Azure, use a managed identity with the same role.
+```
+
+For Docker Compose set `STORAGE_PROVIDER=AzureBlob`, `AZURE_STORAGE_ACCOUNT`, `AZURE_STORAGE_CONTAINER` and (option A)
+`AZURE_STORAGE_CONNECTION_STRING` in `.env`.
+
+**3. Verify**
+
+```bash
+dotnet run                                   # in CitadelIQ.Api/
+curl http://localhost:5157/health/storage    # {"status":"healthy","provider":"AzureBlob"}
+```
+
+Upload a file in the UI, then confirm the blob exists:
+
+```bash
+az storage blob list --account-name $ACCOUNT --container-name $CONTAINER --auth-mode login --output table
+```
+
+To go back to local disk: `dotnet user-secrets set "Storage:Provider" "LocalDisk"`. Files already on local disk are not
+migrated to the container (and vice versa).
+
 ## 🔐 Security notes
 
 - OpenAI API key lives in `dotnet user-secrets`, never in source or sent to the frontend.
