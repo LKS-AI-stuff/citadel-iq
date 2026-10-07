@@ -8,5 +8,7 @@ namespace CitadelIQ.Application.Interfaces;
 /// </summary>
 public interface IDocumentProcessingDispatcher
 {
-    void Dispatch(Guid documentId);
+    /// <summary>Processes the document inside <paramref name="workspaceId"/>: the background scope enters that
+    /// workspace before running, so row-level security applies to background work too.</summary>
+    void Dispatch(Guid workspaceId, Guid documentId);
 }

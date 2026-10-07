@@ -18,14 +18,17 @@ import { GlassSurface } from '../components/common/GlassSurface';
 import { SectionHeader } from '../components/common/SectionHeader';
 import { useToast } from '../components/common/ToastProvider';
 import { folderAccentColor as getFolderAccentColor } from '../theme/glass';
-import { ROOT_FOLDER_ID } from '../constants';
+import { useActiveWorkspace } from '../session/useSession';
 import type { ProcessingStatus } from '../types/folder';
 
 const UNSETTLED_STATUSES = new Set<ProcessingStatus>(['Uploaded', 'ExtractingText', 'Chunking', 'GeneratingEmbeddings']);
 
 export function FolderPage() {
   const { folderId } = useParams<{ folderId?: string }>();
-  const currentFolderId = folderId ?? ROOT_FOLDER_ID;
+  // Each workspace has its own Home folder; "/" always means it.
+  const { workspace } = useActiveWorkspace();
+  const rootFolderId = workspace.rootFolderId;
+  const currentFolderId = folderId ?? rootFolderId;
   const navigate = useNavigate();
   const { contents, isLoading, error, refetch } = useFolderContents(currentFolderId);
   const theme = useTheme();
@@ -37,7 +40,7 @@ export function FolderPage() {
   const previousStatusesRef = useRef<Record<string, ProcessingStatus>>({});
 
   const goToFolder = (id: string) => {
-    navigate(id === ROOT_FOLDER_ID ? '/' : `/folders/${id}`);
+    navigate(id === rootFolderId ? '/' : `/folders/${id}`);
   };
 
   useEffect(() => {
@@ -85,11 +88,11 @@ export function FolderPage() {
       >
         {contents ? <Breadcrumbs items={contents.folderPath} onNavigate={goToFolder} /> : <Box />}
         <Stack direction="row" sx={{ gap: 1 }}>
-          {currentFolderId !== ROOT_FOLDER_ID && (
+          {currentFolderId !== rootFolderId && (
             <Button
               variant="outlined"
               startIcon={<ArrowBackOutlinedIcon />}
-              onClick={() => goToFolder(contents?.folder.parentFolderId ?? ROOT_FOLDER_ID)}
+              onClick={() => goToFolder(contents?.folder.parentFolderId ?? rootFolderId)}
             >
               Back
             </Button>

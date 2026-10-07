@@ -23,6 +23,8 @@ public class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Exception
             var (statusCode, title) = ex switch
             {
                 NotFoundException => (StatusCodes.Status404NotFound, ex.Message),
+                ForbiddenException => (StatusCodes.Status403Forbidden, ex.Message),
+                UnauthenticatedException => (StatusCodes.Status401Unauthorized, ex.Message),
                 ValidationException => (StatusCodes.Status400BadRequest, ex.Message),
                 DomainException => (StatusCodes.Status400BadRequest, ex.Message),
                 BadHttpRequestException bad => (bad.StatusCode, bad.StatusCode == StatusCodes.Status413PayloadTooLarge ? "The request is too large." : "The request could not be read."),

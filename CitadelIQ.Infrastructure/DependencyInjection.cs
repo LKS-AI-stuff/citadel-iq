@@ -27,9 +27,18 @@ public static class DependencyInjection
                 "Set it via dotnet user-secrets or an environment variable.");
         }
 
+        // The interceptor is stateless (it reads the workspace from the DbContext it is called for), so one instance
+        // serves every context.
+        var workspaceInterceptor = new WorkspaceConnectionInterceptor();
         services.AddDbContext<CitadelIQDbContext>(options =>
-            options.UseNpgsql(connectionString, npgsql => npgsql.UseVector()));
+            options.UseNpgsql(connectionString, npgsql => npgsql.UseVector())
+                .AddInterceptors(workspaceInterceptor));
 
+        services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        services.AddScoped<IUserAccountRepository, UserAccountRepository>();
+        services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
+        services.AddScoped<IMembershipRepository, MembershipRepository>();
+        services.AddScoped<IJoinRequestRepository, JoinRequestRepository>();
         services.AddScoped<IFolderRepository, FolderRepository>();
         services.AddScoped<IDocumentRepository, DocumentRepository>();
         services.AddScoped<IDocumentChunkRepository, DocumentChunkRepository>();

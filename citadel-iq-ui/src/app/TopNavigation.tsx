@@ -4,6 +4,7 @@ import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
 import { GlassSurface } from '../components/common/GlassSurface';
+import { AccountMenu } from '../components/account/AccountMenu';
 import { useColorMode } from '../theme/ColorModeProvider';
 
 interface TopNavigationProps {
@@ -142,6 +143,8 @@ export function TopNavigation({ onSearchClick, onLogoClick }: TopNavigationProps
             </Box>
           </IconButton>
         </Tooltip>
+
+        <AccountMenu />
       </GlassSurface>
     </Box>
   );

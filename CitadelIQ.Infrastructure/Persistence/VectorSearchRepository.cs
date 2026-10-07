@@ -8,8 +8,8 @@ using Pgvector.EntityFrameworkCore;
 namespace CitadelIQ.Infrastructure.Persistence;
 
 /// <summary>
-/// pgvector similarity search. The query is metadata filtering (Ready documents, optional folder
-/// set) followed by <c>ORDER BY embedding &lt;=&gt; @query LIMIT @topK</c>: <c>&lt;=&gt;</c> is pgvector's
+/// pgvector similarity search. The query is metadata filtering (current workspace via the query filter and
+/// row-level security, Ready documents, optional folder set) followed by <c>ORDER BY embedding &lt;=&gt; @query LIMIT @topK</c>: <c>&lt;=&gt;</c> is pgvector's
 /// cosine-distance operator (0 = identical direction), so similarity = 1 - distance. Ordering by the
 /// bare distance expression lets Postgres use the HNSW index (vector_cosine_ops) when the planner
 /// finds it cheaper than an exact scan; small or heavily filtered sets fall back to exact search.
@@ -57,6 +57,7 @@ public class VectorSearchRepository(CitadelIQDbContext db) : IVectorSearchReposi
                 x.chunk.ChunkIndex,
                 x.chunk.PageNumber,
                 x.chunk.SheetName,
+                x.document.UploadedByUserId,
                 Distance = EF.Property<Vector>(x.chunk, DocumentChunkConfiguration.EmbeddingProperty).CosineDistance(queryVector)
             })
             .OrderBy(x => x.Distance)
@@ -65,7 +66,8 @@ public class VectorSearchRepository(CitadelIQDbContext db) : IVectorSearchReposi
 
         return rows
             .Select(r => new DocumentSearchResult(
-                r.ChunkId, r.DocumentId, r.FolderId, r.FileName, r.ContentType, r.Text, r.ChunkIndex, r.PageNumber, r.SheetName, 1d - r.Distance))
+                r.ChunkId, r.DocumentId, r.FolderId, r.FileName, r.ContentType, r.Text, r.ChunkIndex, r.PageNumber, r.SheetName, 1d - r.Distance,
+                r.UploadedByUserId))
             .ToList();
     }
 }

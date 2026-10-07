@@ -9,4 +9,5 @@ public record SearchResultDto(
     int ChunkIndex,
     int? PageNumber,
     string? SheetName,
-    double SimilarityScore);
+    double SimilarityScore,
+    UploaderDto? UploadedBy = null);

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace CitadelIQ.Infrastructure.Storage;
 
 /// <summary>
-/// Stores raw uploaded files as blobs named <c>{documentId}{extension}</c> in a private Azure Blob container.
+/// Stores raw uploaded files as blobs named <c>{workspaceId}/{documentId}{extension}</c> in a private Azure Blob container.
 /// Authenticates with the configured connection string if there is one, otherwise with
 /// <see cref="DefaultAzureCredential"/> (managed identity / <c>az login</c>) against the account endpoint.
 /// The client is created lazily, like the OpenAI clients, so a bad configuration fails only when storage is used.
@@ -19,12 +19,12 @@ public class AzureBlobDocumentStorage(IOptions<StorageOptions> options, ILogger<
 {
     private readonly Lazy<BlobContainerClient> _container = new(() => CreateContainerClient(options.Value.AzureBlob));
 
-    public async Task SaveAsync(Guid documentId, string fileExtension, Stream content, CancellationToken cancellationToken = default)
+    public async Task SaveAsync(Guid workspaceId, Guid documentId, string fileExtension, Stream content, CancellationToken cancellationToken = default)
     {
         try
         {
             await EnsureContainerAsync(cancellationToken);
-            await _container.Value.GetBlobClient(BlobName(documentId, fileExtension)).UploadAsync(content, overwrite: true, cancellationToken);
+            await _container.Value.GetBlobClient(BlobName(workspaceId, documentId, fileExtension)).UploadAsync(content, overwrite: true, cancellationToken);
         }
         catch (Exception ex) when (ex is RequestFailedException or AuthenticationFailedException)
         {
@@ -32,17 +32,17 @@ public class AzureBlobDocumentStorage(IOptions<StorageOptions> options, ILogger<
         }
     }
 
-    public async Task<Stream> OpenReadAsync(Guid documentId, string fileExtension, CancellationToken cancellationToken = default)
+    public async Task<Stream> OpenReadAsync(Guid workspaceId, Guid documentId, string fileExtension, CancellationToken cancellationToken = default)
     {
         try
         {
             // BlobClient.OpenReadAsync returns a seekable, buffered stream, which the PDF/DOCX/XLSX extractors need.
-            return await _container.Value.GetBlobClient(BlobName(documentId, fileExtension)).OpenReadAsync(cancellationToken: cancellationToken);
+            return await _container.Value.GetBlobClient(BlobName(workspaceId, documentId, fileExtension)).OpenReadAsync(cancellationToken: cancellationToken);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
             // Same exception the local provider surfaces for a missing file.
-            throw new FileNotFoundException("The stored file was not found.", BlobName(documentId, fileExtension), ex);
+            throw new FileNotFoundException("The stored file was not found.", BlobName(workspaceId, documentId, fileExtension), ex);
         }
         catch (Exception ex) when (ex is RequestFailedException or AuthenticationFailedException)
         {
@@ -50,11 +50,11 @@ public class AzureBlobDocumentStorage(IOptions<StorageOptions> options, ILogger<
         }
     }
 
-    public async Task DeleteAsync(Guid documentId, string fileExtension, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid workspaceId, Guid documentId, string fileExtension, CancellationToken cancellationToken = default)
     {
         try
         {
-            await _container.Value.GetBlobClient(BlobName(documentId, fileExtension)).DeleteIfExistsAsync(cancellationToken: cancellationToken);
+            await _container.Value.GetBlobClient(BlobName(workspaceId, documentId, fileExtension)).DeleteIfExistsAsync(cancellationToken: cancellationToken);
         }
         catch (Exception ex) when (ex is RequestFailedException or AuthenticationFailedException)
         {
@@ -87,7 +87,8 @@ public class AzureBlobDocumentStorage(IOptions<StorageOptions> options, ILogger<
         }
     }
 
-    private static string BlobName(Guid documentId, string fileExtension) => $"{documentId}{fileExtension}";
+    /// <summary><c>{workspaceId}/{documentId}{extension}</c>: a virtual directory per workspace.</summary>
+    private static string BlobName(Guid workspaceId, Guid documentId, string fileExtension) => $"{workspaceId}/{documentId}{fileExtension}";
 
     private IOException Wrap(string operation, Exception ex)
     {

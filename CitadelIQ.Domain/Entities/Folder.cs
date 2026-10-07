@@ -3,37 +3,40 @@ using CitadelIQ.Domain.Exceptions;
 namespace CitadelIQ.Domain.Entities;
 
 /// <summary>
-/// A folder in the document-management tree. A null <see cref="ParentFolderId"/> marks the
-/// single root ("Home") folder.
+/// A folder in a workspace's document tree. A null <see cref="ParentFolderId"/> marks the workspace's
+/// root ("Home") folder — exactly one per workspace.
 /// </summary>
 public class Folder
 {
-    /// <summary>Well-known id of the single root ("Home") folder, so clients can navigate to it
-    /// without a lookup.</summary>
-    public static readonly Guid RootId = Guid.Empty;
+    public const string RootName = "Home";
 
     private static readonly char[] InvalidNameChars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 
     public Guid Id { get; private set; }
+    public Guid WorkspaceId { get; private set; }
     public string Name { get; private set; }
     public Guid? ParentFolderId { get; private set; }
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
-    private Folder(Guid id, string name, Guid? parentFolderId, DateTimeOffset createdAtUtc)
+    private Folder(Guid id, Guid workspaceId, string name, Guid? parentFolderId, DateTimeOffset createdAtUtc)
     {
         Id = id;
+        WorkspaceId = workspaceId;
         Name = name;
         ParentFolderId = parentFolderId;
         CreatedAtUtc = createdAtUtc;
     }
 
-    public static Folder CreateRoot() =>
-        new(RootId, "Home", parentFolderId: null, DateTimeOffset.UtcNow);
+    public bool IsRoot => ParentFolderId is null;
 
-    public static Folder Create(string name, Guid parentFolderId)
+    public static Folder CreateRoot(Guid workspaceId) =>
+        new(Guid.NewGuid(), workspaceId, RootName, parentFolderId: null, DateTimeOffset.UtcNow);
+
+    /// <summary>Creates a subfolder in the parent's workspace, so a child can never land in another workspace.</summary>
+    public static Folder CreateChild(Folder parent, string name)
     {
         var trimmed = ValidateName(name);
-        return new Folder(Guid.NewGuid(), trimmed, parentFolderId, DateTimeOffset.UtcNow);
+        return new Folder(Guid.NewGuid(), parent.WorkspaceId, trimmed, parent.Id, DateTimeOffset.UtcNow);
     }
 
     public void Rename(string name)

@@ -4,6 +4,9 @@ namespace CitadelIQ.Application.Folders;
 
 public interface IFolderService
 {
+    /// <summary>The current workspace's root ("Home") folder.</summary>
+    Task<FolderDto> GetRootAsync(CancellationToken cancellationToken = default);
+
     Task<FolderDto> GetByIdAsync(Guid folderId, CancellationToken cancellationToken = default);
 
     Task<FolderContentsDto> GetContentsAsync(Guid folderId, CancellationToken cancellationToken = default);

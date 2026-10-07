@@ -13,13 +13,16 @@ public class FolderConfiguration : IEntityTypeConfiguration<Folder>
         builder.Property(f => f.Id).ValueGeneratedNever();
         builder.Property(f => f.Name).IsRequired().HasMaxLength(255);
 
-        // Self-referencing tree; deleting a folder cascades to its whole subtree.
+        builder.HasOne<Workspace>().WithMany().HasForeignKey(f => f.WorkspaceId).OnDelete(DeleteBehavior.Cascade);
+
+        // Self-referencing tree; deleting a folder cascades to its whole subtree. In the database this is the
+        // composite (WorkspaceId, ParentFolderId) → (WorkspaceId, Id) key, so a parent is always in the same workspace.
         builder.HasOne<Folder>()
             .WithMany()
             .HasForeignKey(f => f.ParentFolderId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // Schema (incl. the unique (ParentFolderId, lower(Name)) index and the seeded root folder)
-        // is created by CitadelIQ.FluentMigrations.
+        // Schema (incl. the unique (ParentFolderId, lower(Name)) index, one-root-per-workspace index and the
+        // row-level security policy) is created by CitadelIQ.FluentMigrations.
     }
 }

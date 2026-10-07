@@ -68,15 +68,29 @@ docker stop citadeliq-pg        # stop (data is kept)
 docker start citadeliq-pg       # start again
 ```
 
-Set the connection string (stored via user-secrets, never committed — `appsettings.json` has an empty value):
+**Two database logins.** Postgres superusers ignore row-level security, which keeps workspaces apart, so the API runs as
+a restricted login and only the migrations use the `postgres` superuser. Create the restricted login once (choose a
+second password `<app-pw>`):
+
+```bash
+docker exec -it citadeliq-pg psql -U postgres -c \
+  "CREATE ROLE citadeliq_app LOGIN PASSWORD '<app-pw>' NOSUPERUSER NOBYPASSRLS;"
+```
+
+Set both connection strings (stored via user-secrets, never committed — `appsettings.json` has empty values):
 
 ```bash
 cd CitadelIQ.Api
-dotnet user-secrets set "ConnectionStrings:CitadelIQ" "Host=localhost;Port=5432;Database=citadeliq;Username=postgres;Password=<pw>"
+dotnet user-secrets set "ConnectionStrings:CitadelIQ"           "Host=localhost;Port=5432;Database=citadeliq;Username=citadeliq_app;Password=<app-pw>"
+dotnet user-secrets set "ConnectionStrings:CitadelIQMigrations" "Host=localhost;Port=5432;Database=citadeliq;Username=postgres;Password=<pw>"
 ```
 
-The schema (tables, pgvector column, indexes, root "Home" folder) is created automatically by the
-FluentMigrator migrations when the API starts in Development.
+The schema (tables, pgvector column, indexes, row-level security policies, and the grants for `citadeliq_app`) is
+created automatically by the FluentMigrator migrations when the API starts in Development. The API **refuses to start**
+if `ConnectionStrings:CitadelIQ` uses a superuser or a role with `BYPASSRLS`.
+
+> **Upgrading from before workspaces?** The initial migration was rewritten in place, so an existing database will not
+> pick it up. Reset it (see *Resetting local data*) and clear `App_Data/documents`, then create `citadeliq_app` as above.
 
 #### Querying the data with psql
 
@@ -101,7 +115,9 @@ Useful `psql` commands (no `;` needed):
 Example queries:
 
 ```sql
-SELECT * FROM "Folders";                    -- includes the seeded "Home" root folder
+SELECT * FROM "Workspaces";                 -- one row per individual / organization workspace
+SELECT "DisplayName", "Email", "ClosedAtUtc" FROM "Users";
+SELECT * FROM "Folders";                    -- each workspace has its own "Home" root (ParentFolderId IS NULL)
 SELECT "FileName", "ProcessingStatus", "FailureReason" FROM "Documents";
 SELECT "ChunkIndex", left("Text", 60) AS text, "ModelName", "Embedding" IS NOT NULL AS has_embedding
 FROM "DocumentChunks";
@@ -115,6 +131,8 @@ docker exec -it citadeliq-pg psql -U postgres -d citadeliq -c 'SELECT "FileName"
 ```
 
 Notes:
+- Connect as `postgres` (as above) to see every workspace's rows. As `citadeliq_app` you see nothing unless the session
+  is stamped with a workspace: `SELECT set_config('app.workspace_id', '<workspace id>', false);`.
 - Table and column names are case-sensitive, so keep the double quotes (`"Documents"`, not `Documents`).
 - Avoid `SELECT *` on `"DocumentChunks"` — the embedding column prints 1536 numbers per row.
 - If `psql` can't find the container, check it's running with `docker ps` (start it with `docker start citadeliq-pg`).
@@ -129,18 +147,16 @@ Uploaded files and database rows are stored separately, so clear both.
 ```bash
 docker rm -f citadeliq-pg
 docker volume rm citadeliq-pgdata
-# then re-run the `docker run ...` command above
+# then re-run the `docker run ...` command above, and create citadeliq_app again
 ```
 
-**Keep the container, delete only the rows** (keeps the schema and the root "Home" folder — don't truncate
-`Folders` or `VersionInfo`):
+**Keep the container, delete only the rows** (keeps the schema and `VersionInfo`; everyone onboards again):
 
 ```bash
 docker exec -it citadeliq-pg psql -U postgres -d citadeliq
 ```
 ```sql
-TRUNCATE "DocumentChunks", "Documents";
-DELETE FROM "Folders" WHERE "Id" <> '00000000-0000-0000-0000-000000000000';
+TRUNCATE "DocumentChunks", "Documents", "Folders", "JoinRequests", "Memberships", "Users", "Workspaces";
 ```
 
 **Delete the uploaded files:**
@@ -164,20 +180,43 @@ dotnet run
 
 The API starts on `http://localhost:5157`.
 
+**Sign-in.** In Development the API defaults to `Authentication:Mode = DevelopmentLogin`: a local form where any email
+signs in (the same email is the same account), so you can work without an identity provider. It is refused outside
+the Development environment. To use **Microsoft Entra External ID** instead:
+
+1. In the Azure portal, create an *external* tenant, then a *Sign up and sign in* user flow (email + password, collect
+   *Display name*; email is verified with a one-time code).
+2. Register an app (platform **Web**). Redirect URI `http://localhost:5173/signin-oidc`, front-channel logout / post-logout
+   redirect `http://localhost:5173/signout-callback-oidc`. Add `email` as an optional ID-token claim. Create a client secret.
+3. Link the app to the user flow, then:
+
+```bash
+dotnet user-secrets set "Authentication:Mode" "Oidc"
+dotnet user-secrets set "Authentication:Oidc:Authority" "https://<tenant-subdomain>.ciamlogin.com/<tenant-id>/v2.0"
+dotnet user-secrets set "Authentication:Oidc:ClientId" "<application (client) id>"
+dotnet user-secrets set "Authentication:Oidc:ClientSecret" "<client secret>"
+```
+
+The session is an HttpOnly cookie (`__Host-citadeliq`, Secure). Chrome and Firefox accept Secure cookies on
+`http://localhost`; Safari does not — use Chrome/Firefox locally, or run the API with `--launch-profile https` and
+`API_PROXY_TARGET=https://localhost:7274 npm run dev`.
+
 ### 3. Frontend setup
 
 ```bash
 cd citadel-iq-ui
 npm install
-cp .env.example .env.local   # if .env.local doesn't already exist
 npm run dev
 ```
 
-The UI opens at `http://localhost:5173`.
+The UI opens at `http://localhost:5173`. The dev server proxies `/api`, `/auth` and the OIDC callback paths to the API
+(`http://localhost:5157`, override with `API_PROXY_TARGET`), so the browser only ever talks to one origin.
 
 ### 4. Try it out
 
-1. Open `http://localhost:5173` — you'll land on an empty **Home**.
+1. Open `http://localhost:5173` and sign in. On first sign-in choose **Just me** (a private workspace), **New
+   organization** (you become its Owner), or **Join an organization** with a join code from its admin page — an Owner
+   or Admin then approves you. You land on your workspace's empty **Home**.
 2. Click **New folder** to create a folder (there's no seed data — you build the structure yourself).
    Each folder card has Open, Rename (inline text box, Enter to save/Escape to cancel), and Delete
    icons; deleting a folder cascades to every subfolder and document inside it. A **Back** button
@@ -186,7 +225,7 @@ The UI opens at `http://localhost:5173`.
    through *Extracting text… → Creating searchable sections… → Generating embeddings… → Ready*.
 4. Click the search icon in the top bar, type a natural-language question, and see ranked results
    with similarity scores — even if your wording doesn't match the document's wording. Search
-   defaults to the folder you're currently viewing; switch to "+ Subfolders" or "Entire portal" to
+   defaults to the folder you're currently viewing; switch to "+ Subfolders" or "Entire workspace" to
    widen it.
 
 ## ⚙️ Configuration
@@ -247,7 +286,11 @@ npm run preview  # Preview the production build
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `GET` | `/api/folders/root` | Well-known Home folder id |
+| `GET` | `/api/me` | Session: onboarding / pending / active (workspace, role) / closed |
+| `POST` | `/api/onboarding/individual`, `/organization`, `/join-requests` | First sign-in choices |
+| `GET`/`PUT`/`DELETE` | `/api/organization/members…` | Members and roles (Admin/Owner) |
+| `GET`/`POST` | `/api/organization/join-requests…`, `/join-code…` | Approvals and the join code (Admin/Owner) |
+| `GET` | `/api/folders/root` | The caller's workspace Home folder id |
 | `GET` | `/api/folders/{id}` | Folder metadata |
 | `GET` | `/api/folders/{id}/contents` | Subfolders + documents + breadcrumb |
 | `POST` | `/api/folders` | Create a folder |
@@ -364,9 +407,12 @@ migrated to the container (and vice versa).
 - All API errors are routed through a global exception handler that returns safe, generic messages
   — no stack traces, exception types, or internal configuration are ever exposed.
 - File uploads are validated on the backend (type + size) regardless of frontend validation.
-- Authentication/authorization are explicitly out of scope for this version, but the architecture
-  (interfaces around every repository and external service) is shaped so they can be added later
-  without reworking the Application layer.
+- Sign-in is delegated to an OIDC provider (Entra External ID); the browser holds only an HttpOnly session cookie, and
+  every state-changing request needs the `X-CSRF` header.
+- Every folder, document, chunk and stored file belongs to one workspace. Isolation is enforced twice: by the
+  application (EF Core query filters) and by PostgreSQL row-level security, with the API connected as a role that
+  cannot bypass it. Another workspace's ids answer 404.
+- Only Admins and Owners delete or rename; an organization always keeps at least one Owner.
 
 ## 📖 Further reading
 

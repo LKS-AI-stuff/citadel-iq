@@ -46,7 +46,7 @@ public class RagUnitTests
     public void Validator_rejects_empty_and_long_questions_and_over_limit_history()
     {
         var v = new AskRequestValidator(Opts(o => { o.MaxQuestionLength = 10; o.MaxHistoryTurns = 2; o.MaxHistoryChars = 20; }));
-        AskRequestDto Req(string q, params ConversationTurnDto[] h) => new(q, Guid.Empty, SearchScope.EntirePortal, h);
+        AskRequestDto Req(string q, params ConversationTurnDto[] h) => new(q, Guid.Empty, SearchScope.EntireWorkspace, h);
 
         Assert.Equal("Question cannot be empty.", Assert.Throws<ValidationException>(() => v.Validate(Req(" "))).Message);
         Assert.Contains("too long", Assert.Throws<ValidationException>(() => v.Validate(Req("12345678901"))).Message);
@@ -204,7 +204,7 @@ public class RagUnitTests
     }
 
     private static AskRequestDto Ask(string q, params ConversationTurnDto[] history) =>
-        new(q, Guid.Empty, SearchScope.EntirePortal, history);
+        new(q, Guid.Empty, SearchScope.EntireWorkspace, history);
 
     private static async Task<List<AnswerEvent>> Drain(AnswerRun run)
     {

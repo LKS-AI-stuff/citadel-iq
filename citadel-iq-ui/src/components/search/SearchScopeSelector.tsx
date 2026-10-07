@@ -13,7 +13,7 @@ interface SearchScopeSelectorProps {
 const OPTIONS: { value: SearchScope; label: string; icon: ReactNode }[] = [
   { value: 'CurrentFolder', label: 'This folder', icon: <FolderRoundedIcon fontSize="small" /> },
   { value: 'CurrentFolderAndSubfolders', label: '+ Subfolders', icon: <AccountTreeRoundedIcon fontSize="small" /> },
-  { value: 'EntirePortal', label: 'Entire portal', icon: <ApartmentRoundedIcon fontSize="small" /> },
+  { value: 'EntireWorkspace', label: 'Entire workspace', icon: <ApartmentRoundedIcon fontSize="small" /> },
 ];
 
 export function SearchScopeSelector({ value, onChange }: SearchScopeSelectorProps) {

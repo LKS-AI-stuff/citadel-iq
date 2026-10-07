@@ -5,6 +5,7 @@ import './index.css';
 import { ColorModeProvider } from './theme/ColorModeProvider';
 import { ToastProvider } from './components/common/ToastProvider';
 import { SettingsProvider } from './settings/SettingsProvider';
+import { SessionProvider } from './session/SessionProvider';
 import App from './App.tsx';
 
 createRoot(document.getElementById('root')!).render(
@@ -12,9 +13,11 @@ createRoot(document.getElementById('root')!).render(
     <ColorModeProvider>
       <ToastProvider>
         <SettingsProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
+          <SessionProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </SessionProvider>
         </SettingsProvider>
       </ToastProvider>
     </ColorModeProvider>

@@ -11,6 +11,7 @@ public record AnswerSourceDto(
     int ChunkIndex,
     int? PageNumber,
     string? SheetName,
-    double SimilarityScore);
+    double SimilarityScore,
+    UploaderDto? UploadedBy = null);
 
 public record AnswerUsageDto(int InputTokens, int OutputTokens);

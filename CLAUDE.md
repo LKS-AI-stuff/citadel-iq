@@ -5,7 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 **CitadelIQ** is an AI-powered document management and semantic search portal — a professional,
-enterprise-style application, not a chatbot. Users organize documents into folders, upload files,
+enterprise-style application, not a chatbot. Users sign in (OIDC, Entra External ID) and work in exactly one
+**workspace** — an Individual (private) one or an Organization shared with its members (Owner/Admin/Member roles,
+join by code + approval); see [authentication-and-workspaces.md](./.claude/technical-designs/authentication-and-workspaces.md).
+Within the workspace users organize documents into folders, upload files,
 and run natural-language searches that return the most relevant document chunks ranked by cosine
 similarity against OpenAI embeddings. Search returns ranked passages; an **Ask** mode on top streams a short, cited, AI-written answer grounded only in
 the retrieved passages (RAG — see [rag.md](./.claude/technical-designs/rag.md); the original deliberate stop at
@@ -27,9 +30,10 @@ reasoning, so a change that looks like an obvious improvement may already be a d
 ### High-level design
 
 ```
-React UI (Vite) ←→ ASP.NET Core API ←→ OpenAI Embeddings API
+React UI (Vite) ←same origin→ ASP.NET Core API (BFF: OIDC + HttpOnly cookie) ←→ OpenAI / Entra External ID
                           │
-                          ├── PostgreSQL + pgvector (folders, documents, chunks, embeddings)
+                          ├── PostgreSQL + pgvector (workspaces, users, memberships; folders, documents, chunks
+                          │   and embeddings under row-level security per workspace)
                           └── Raw uploaded file bytes: local disk (App_Data/documents) or Azure Blob Storage (Storage:Provider)
 ```
 
@@ -44,13 +48,21 @@ CitadelIQ.sln
  └─ CitadelIQ.Api             (depends on Application, Infrastructure, FluentMigrations)
 ```
 
-**Domain** (`CitadelIQ.Domain/`): `Folder`, `Document`, `DocumentChunk`, `DocumentEmbedding`
-entities; `ProcessingStatus` and `SearchScope` enums; `DomainException`. `Folder.RootId` is a
-well-known `Guid.Empty` — the single "Home" folder always has this id, so the frontend never needs
-to look it up.
+**Domain** (`CitadelIQ.Domain/`): `Workspace`, `UserAccount`, `Membership`, `JoinRequest`, `Folder`, `Document`,
+`DocumentChunk`, `DocumentEmbedding` entities; `ProcessingStatus`, `SearchScope`, `WorkspaceKind`, `WorkspaceRole`,
+`JoinRequestStatus` enums; `Rules/MembershipRules` (permission table, at-least-one-Owner) and `Rules/JoinCode`;
+`DomainException`. Folders/documents/chunks carry `WorkspaceId` (children inherit it: `Folder.CreateChild(parent, …)`,
+`Document.Create(folder, …)`, `DocumentChunk.Create(document, …)`). Each workspace has its own root ("Home") folder
+(`ParentFolderId == null`, `IsRoot`); there is **no** global well-known root id any more — the UI gets it from `GET /api/me`.
 
 **Application** (`CitadelIQ.Application/`): use cases, interfaces, DTOs — no external
 dependencies (no OpenAI SDK, no ASP.NET, no disk I/O). Key pieces:
+- `Accounts/` — `ICurrentUser` + `IWorkspaceContext` (both the scoped `CurrentUserContext`, filled per request by the
+  Api's `CurrentUserMiddleware`, by the dispatcher for background work, and by onboarding), `AccountService`
+  (ensure/resolve user, `GET /api/me` session), `OnboardingService`, `UploaderLookup`; `Organizations/OrganizationAdminService`
+  (members, roles, approvals, join code — every membership change via `IMembershipRepository.RunLockedAsync`, which
+  locks the workspace row so the last-Owner rule holds under concurrency). Role checks (`currentUser.EnsureRole`) live
+  in the services, not controllers: delete/rename are Admin+.
 - `Folders/FolderService`, `Folders/FolderPathBuilder` (shared ancestor-walk logic for
   breadcrumbs and search result folder-path display)
 - `Documents/DocumentService` (upload → validate → save → dispatch background processing),
@@ -72,7 +84,12 @@ dependencies (no OpenAI SDK, no ASP.NET, no disk I/O). Key pieces:
 **Infrastructure** (`CitadelIQ.Infrastructure/`): the only layer allowed to depend on OpenAI, the
 filesystem, or a specific persistence mechanism.
 - `Persistence/` — EF Core + PostgreSQL + pgvector (`CitadelIQDbContext`, `Configurations/`,
-  scoped `*Repository` classes; EF is used for queries only). The embedding is a pgvector `vector(N)` column on
+  scoped `*Repository` classes; EF is used for queries only). **Workspace isolation, twice:** global query filters on
+  `Folder`/`Document`/`DocumentChunk` (`WorkspaceId == CurrentWorkspaceId`; never use `IgnoreQueryFilters()`), and
+  PostgreSQL row-level security — `WorkspaceConnectionInterceptor` stamps every opened connection with
+  `app.workspace_id` (empty ⇒ no rows) and `hnsw.iterative_scan`. The API runs as the restricted `citadeliq_app` role;
+  `DatabaseRoleGuard` refuses to start if the runtime role is a superuser or has BYPASSRLS. Composite FKs
+  (`(WorkspaceId, ParentId)`) make cross-workspace references impossible. The embedding is a pgvector `vector(N)` column on
   `DocumentChunks` (shadow properties `Embedding`/`ModelName`, not on the domain entity), with an HNSW
   cosine index. **The schema is owned by `CitadelIQ.FluentMigrations`** (FluentMigrator; the EF model just mirrors it). `VectorSearchRepository` runs the similarity query (`ORDER BY embedding <=> @q LIMIT k`)
   after filtering to `Ready` documents and the folder-id set `SearchService` resolved. The unique
@@ -80,11 +97,11 @@ filesystem, or a specific persistence mechanism.
   violation into the usual "already exists" `ValidationException`. DbContext is scoped, so each background
   processing task (own DI scope) gets its own.
 - `Storage/AzureBlobDocumentStorage` — alternative `IDocumentStorage` (`Storage:Provider=AzureBlob`): blobs named
-  `{documentId}{extension}` in a private container; auth is the connection string if set, otherwise
+  `{workspaceId}/{documentId}{extension}` in a private container; auth is the connection string if set, otherwise
   `DefaultAzureCredential` (managed identity / `az login`) against `https://{AccountName}.blob.core.windows.net`.
   Account and container names are config. Lazy client, seekable read stream, idempotent delete, 404 → `FileNotFoundException`.
   Also implements `IStorageProbe` (used by `GET /health/storage`). Design: [azure-blob-storage.md](./.claude/technical-designs/azure-blob-storage.md).
-- `Storage/LocalDiskDocumentStorage` — (default provider) raw file bytes go to `App_Data/documents/` (configurable
+- `Storage/LocalDiskDocumentStorage` — (default provider) raw file bytes go to `App_Data/documents/{workspaceId}/` (configurable
   via `Storage:DocumentsPath`), **not** `bin/` (which `dotnet build`/`clean` wipes) and **not**
   RAM (see .claude/technical-designs/design.md §3 for the reasoning: keeps memory pressure off large uploads).
 - `TextExtraction/` — `PdfTextExtractor` (PdfPig), `DocxTextExtractor` (DocumentFormat.OpenXml),
@@ -110,8 +127,8 @@ Upload is a two-phase, fire-and-forget flow, **not** a real background job queue
 explicitly out of scope for this version — see .claude/technical-designs/design.md §9):
 
 1. `POST /api/documents/upload` validates the file, saves raw bytes to disk, records the
-   `Document` (status `Uploaded`), and calls `IDocumentProcessingDispatcher.Dispatch(documentId)`
-   — this schedules `Task.Run` on a **new DI scope** (the HTTP request's scope is disposed once
+   `Document` (status `Uploaded`), and calls `IDocumentProcessingDispatcher.Dispatch(workspaceId, documentId)`
+   — this schedules `Task.Run` on a **new DI scope** that first enters the document's workspace (so RLS applies) (the HTTP request's scope is disposed once
    the response is sent) and returns immediately.
 2. The dispatched task runs `DocumentService.ProcessDocumentAsync`: extract text → chunk → call
    OpenAI for embeddings (batched, one call per chunk batch — **never one embedding for the whole
@@ -129,12 +146,13 @@ processed when the API stops stays in its in-progress status (the dispatcher is 
 
 `POST /api/search` → `SearchService.SearchAsync`:
 1. Validates the query is non-empty.
-2. Resolves eligible documents by `SearchScope` (`EntirePortal` / `CurrentFolder` /
+2. Resolves eligible documents by `SearchScope` (`EntireWorkspace` / `CurrentFolder` /
    `CurrentFolderAndSubfolders`) — scope resolution and folder-tree walking happen **server-side**;
    the frontend only sends `currentFolderId` + `searchScope`.
 3. Filters to documents with `ProcessingStatus.Ready` (in-progress/failed documents are silently
    excluded from results, not treated as a hard error).
-4. Embeds the query once and hands it, with the resolved folder-id set (`null` = entire portal) and top-K
+4. Embeds the query once and hands it, with the resolved folder-id set (`null` = the whole workspace — the query
+   filter and RLS confine every query to it) and top-K
    (`SearchOptions.DefaultTopK`, overridable per-request up to `SearchOptions.MaxTopK`), to
    `IVectorSearchRepository`, which ranks by pgvector cosine distance in SQL (score = 1 − distance).
 5. Builds each result's folder-path display via `FolderPathBuilder`, omitting the root "Home"
@@ -183,9 +201,15 @@ citadel-iq-ui/src/
  │   ├─ search/     SearchPanel, SearchScopeSelector, SearchInput, SearchResults, SearchResultCard
  │   └─ common/      EmptyState, LoadingState, ToastProvider, ConfirmDialog, GlassSurface,
  │                    IconBadge, SectionHeader, AssistantInfoPanel
- ├─ hooks/          useFolderContents, useCreateFolder, useRenameFolder, useDeleteFolder,
+ ├─ session/        SessionProvider (GET /api/me; 401 → sign-in, "account closed" → refetch), useSession /
+ │                   useActiveWorkspace (workspace, role, `can.deleteContent/renameFolders/administer`)
+ ├─ pages/          SignInPage, OnboardingPage, PendingApprovalPage, AccountClosedPage (shown by app/SessionGate),
+ │                   AdminPage (/admin: join requests, members + roles, join code)
+ ├─ components/account/  AccountMenu (top bar), SignOutButton (form post), StandalonePage
+ ├─ hooks/          useMembers, useJoinRequests, useJoinCode, useFolderContents, useCreateFolder, useRenameFolder, useDeleteFolder,
  │                   useDeleteDocument, useUpload, useSearch
- ├─ api/            apiClient (fetch wrapper + ApiError), foldersApi, documentsApi, searchApi
+ ├─ api/            apiClient (same-origin fetch wrapper + ApiError; X-CSRF on non-GET; reports 401/403 to the
+ │                   session), sessionApi, organizationApi, foldersApi, documentsApi, searchApi
  ├─ theme/          ColorModeProvider (light/dark, persisted to localStorage), theme.ts, glass.ts
  ├─ types/          folder.ts, search.ts — hand-kept in sync with backend DTOs
  └─ utils/          highlightMatches.tsx — best-effort literal term highlighting in search snippets
@@ -242,10 +266,16 @@ fall to the right instead.
 
 Notes:
 - `FolderPage`'s toolbar shows a **Back** button (before "New folder") whenever the current folder
-  isn't Home, navigating to `contents.folder.parentFolderId` — added because relying on the
+  isn't the workspace's Home (`session.workspace.rootFolderId`), navigating to `contents.folder.parentFolderId` — added because relying on the
   breadcrumbs alone to go up a level isn't discoverable for every user.
-- `useSearch`'s default `SearchScope` is `CurrentFolder` ("This folder"), not `EntirePortal` — and
-  `SearchScopeSelector`'s `OPTIONS` array orders them This folder → +Subfolders → Entire portal,
+- **Same origin, no API URL:** `vite.config.ts` proxies `/api`, `/auth`, `/signin-oidc`, `/signout-callback-oidc` to the
+  backend (`API_PROXY_TARGET`, default `http://localhost:5157`); nginx does the same in Docker. Paths in `api/` are
+  relative and the HttpOnly session cookie is sent automatically; there is no `VITE_API_URL`. Every non-GET request
+  (fetch, SSE and the upload XHR) sends `X-CSRF: 1`; sign-out is a real form post.
+- Role-aware UI: `FileCard` hides Delete and `FolderCard` hides Rename/Delete unless `can.*` allows; the server
+  enforces the same rules. `UploaderCaption` ("Uploaded by …", "(former member)") shows only in organizations.
+- `useSearch`'s default `SearchScope` is `CurrentFolder` ("This folder"), not `EntireWorkspace` — and
+  `SearchScopeSelector`'s `OPTIONS` array orders them This folder → +Subfolders → Entire workspace,
   so the default matches the first/leftmost toggle button.
 - `AppShell` derives the "current folder" for the search panel via `useParams()` — React Router
   v6 merges params from the whole matched route branch, so this works even though `AppShell` is
@@ -280,13 +310,18 @@ dotnet build
 dotnet run
 ```
 
-Runs on `http://localhost:5157` by default (see `Properties/launchSettings.json`).
+Runs on `http://localhost:5157` by default (see `Properties/launchSettings.json`). In Development, sign-in is
+`Authentication:Mode=DevelopmentLogin` (`/auth/dev-login`: any email; refused outside Development). For Entra External
+ID set `Authentication:Mode=Oidc` plus `Authentication:Oidc:Authority/ClientId/ClientSecret` via user-secrets (README).
 
 **PostgreSQL with the pgvector extension** must be running (e.g. the `pgvector/pgvector` Docker image). In
-Development the API applies FluentMigrator migrations on startup. Set the connection string (the committed value is empty):
+Development the API applies FluentMigrator migrations on startup. Two logins (the committed values are empty): the API runs as the restricted `citadeliq_app` role (create it once:
+`CREATE ROLE citadeliq_app LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;`), migrations run as the owner:
 ```bash
-dotnet user-secrets set "ConnectionStrings:CitadelIQ" "Host=localhost;Port=5432;Database=citadeliq;Username=postgres;Password=..."
+dotnet user-secrets set "ConnectionStrings:CitadelIQ" "Host=localhost;Port=5432;Database=citadeliq;Username=citadeliq_app;Password=..."
+dotnet user-secrets set "ConnectionStrings:CitadelIQMigrations" "Host=localhost;Port=5432;Database=citadeliq;Username=postgres;Password=..."
 ```
+The API refuses to start if `ConnectionStrings:CitadelIQ` is a superuser/BYPASSRLS role (RLS would silently not apply).
 
 **Azure Blob Storage (optional)** instead of local disk:
 ```bash
@@ -312,7 +347,10 @@ live separately in `App_Data/documents` — reset both together.
 **Adding a schema change:** add a new numbered class to `CitadelIQ.FluentMigrations/Migrations/`
 (`[Migration(<next number>)]`; use `Execute.Sql` for pgvector/expression-index bits), then update the matching
 EF configuration in `CitadelIQ.Infrastructure/Persistence/Configurations/` by hand — nothing verifies the two
-agree, and a mismatch only shows up as a query error. The migration runs at startup when
+agree, and a mismatch only shows up as a query error. **Every new table must be granted to `citadeliq_app`**, and every
+table holding workspace content needs a `WorkspaceId`, a composite same-workspace FK, an RLS policy (copy the loop in
+`M202609300001`) and an EF query filter in `CitadelIQDbContext`. The initial migration was rewritten in place when
+workspaces were added — existing dev databases must be reset. The migration runs at startup when
 `Database:MigrateOnStartup` is true (set in `appsettings.Development.json`). The embedding dimension
 (`vector(1536)`) is hardcoded in the first migration; changing the model/dimension needs a new migration and
 re-embedding.
@@ -321,11 +359,14 @@ re-embedding.
 
 `docker-compose.yml` runs `pgvector/pgvector:pg17` (pinned — a major bump won't start on an existing volume),
 the API (`CitadelIQ.Api/Dockerfile`, build context = repo root) and the UI (`citadel-iq-ui/Dockerfile` →
-nginx). Copy `.env.example` to `.env` (`POSTGRES_PASSWORD`, `OPENAI_API_KEY`, optional `OPENAI_EMBEDDING_MODEL`,
-`PUBLIC_API_URL`, `UI_ORIGIN`). The API receives `ConnectionStrings__CitadelIQ`, `OpenAI__ApiKey`,
-`Cors__AllowedOrigins__0` and `Database__MigrateOnStartup=true` as environment variables; Postgres data and
-uploaded files persist in the `pgdata` and `documents` volumes (back up both together; with `Storage:Provider=AzureBlob` the files live in the blob container instead — back up the DB and enable soft delete/versioning on the container). `VITE_API_URL` is baked
-into the UI at build time. Postgres is not published to the host. The app has no auth: don't expose it publicly.
+nginx, which also proxies `/api`, `/auth` and the OIDC callbacks to the API — same origin, the API port is not
+published). Copy `.env.example` to `.env` (`POSTGRES_PASSWORD`, `APP_DB_PASSWORD`, `OPENAI_API_KEY`, `OIDC_AUTHORITY`,
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, optional `OPENAI_EMBEDDING_MODEL`). `deploy/postgres/initdb/01-app-role.sh`
+creates `citadeliq_app` on first volume initialization (on an existing volume create it by hand). The API receives
+both connection strings, `OpenAI__ApiKey`, `Authentication__Oidc__*`, `ForwardedHeaders__KnownProxies__0` (nginx's
+fixed IP) and `Database__MigrateOnStartup=true` as environment variables; Postgres data and
+uploaded files persist in the `pgdata` and `documents` volumes (back up both together; with `Storage:Provider=AzureBlob` the files live in the blob container instead — back up the DB and enable soft delete/versioning on the container). Postgres is not published to the host. Expose the UI only over HTTPS (Secure session cookie; Entra requires https
+redirect URIs except for localhost).
 These Docker files have not yet been built/run end-to-end.
 
 ### Frontend
@@ -338,13 +379,13 @@ npm run build    # tsc -b && vite build
 npm run lint      # oxlint
 ```
 
-`.env.local` (gitignored) sets `VITE_API_URL` — copy from `.env.example` if it doesn't exist.
+No `.env.local` is needed: the dev server proxies the API (set `API_PROXY_TARGET` to point it elsewhere).
 
 ### Running both
 
 Start the backend first (`dotnet run` in `CitadelIQ.Api/`), then the frontend (`npm run dev` in
-`citadel-iq-ui/`). CORS is configured for `http://localhost:5173` via `Cors:AllowedOrigins` in
-`appsettings.json`.
+`citadel-iq-ui/`) and open `http://localhost:5173`. No CORS is needed (`Cors:AllowedOrigins` defaults to empty): the
+Vite proxy keeps the UI and API on one origin.
 
 ## Configuration reference
 
@@ -352,9 +393,14 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 
 | Section | Key | Default | Purpose |
 |---|---|---|---|
-| `Cors` | `AllowedOrigins` | `["http://localhost:5173"]` | Allowed frontend origins |
+| `Cors` | `AllowedOrigins` | `[]` | Only for a deliberate cross-origin deployment (same origin by default) |
+| `ConnectionStrings` | `CitadelIQMigrations` | *(empty — user-secrets / env var only)* | Owner role for migrations; required when `Database:MigrateOnStartup` is true |
+| `Authentication` | `Mode` | `Oidc` (`DevelopmentLogin` in `appsettings.Development.json`) | `DevelopmentLogin` is refused outside Development |
+| `Authentication:Oidc` | `Authority`, `ClientId`, `ClientSecret`, `Scopes` | `""`, `""`, *(secret)*, `openid profile email` | `ClientSecret` via user-secrets / `Authentication__Oidc__ClientSecret` only |
+| `Authentication:Session` | `CookieName`, `IdleTimeoutHours`, `AbsoluteLifetimeDays` | `__Host-citadeliq`, `8`, `7` | HttpOnly, Secure, SameSite=Lax session cookie |
+| `Authentication:JoinRateLimit` | `PermitLimit` / `WindowMinutes` | `10` / `60` | Join-code attempts per user |
 | `OpenAI` | `EmbeddingModel` | `text-embedding-3-small` | Embedding model name |
-| `ConnectionStrings` | `CitadelIQ` | *(empty — user-secrets / env var only)* | PostgreSQL connection string; the app refuses to start if it's empty |
+| `ConnectionStrings` | `CitadelIQ` | *(empty — user-secrets / env var only)* | Runtime role (`citadeliq_app`); the app refuses to start if it's empty or bypasses RLS |
 | `OpenAI` | `EmbeddingDimension` | `1536` | Size of the pgvector column — must match the model; changing it needs a new FluentMigrations migration (the migration hardcodes `vector(1536)`) |
 | `OpenAI` | `ApiKey` | *(user-secrets only)* | Never in `appsettings.json` |
 | `Upload` | `MaxFileSizeMB` | `20` | Rejected before processing starts |
@@ -374,7 +420,23 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 ## API contract
 
 ```
-GET    /api/folders/root                    # well-known Home folder id (Guid.Empty)
+GET    /auth/login?returnUrl=               # start sign-in (OIDC challenge, or the dev form)
+POST   /auth/logout                         # form post; clears the cookie (+ IdP end-session)
+GET    /api/me                              # session: NeedsOnboarding | PendingApproval | Active (workspace, role) | Closed
+POST   /api/onboarding/individual           # → session; creator is Owner
+POST   /api/onboarding/organization         # { name } → session; creator is Owner
+POST   /api/onboarding/join-requests        # { joinCode } → session (PendingApproval); rate-limited per user
+DELETE /api/onboarding/join-requests/current
+GET    /api/organization/members            # Admin+ (404 for individual workspaces)
+PUT    /api/organization/members/{userId}/role   # { role }; Admins can't touch Owners; ≥1 Owner always
+DELETE /api/organization/members/{userId}   # removes and closes the account
+POST   /api/organization/leave              # any org member; closes own account
+GET    /api/organization/join-requests      # Admin+
+POST   /api/organization/join-requests/{id}/approve  # { role } (Owner only for role Owner)
+POST   /api/organization/join-requests/{id}/reject
+GET    /api/organization/join-code          # Admin+
+POST   /api/organization/join-code/regenerate
+GET    /api/folders/root                    # the caller's workspace Home folder id
 GET    /api/folders/{folderId}              # folder metadata
 GET    /api/folders/{folderId}/contents     # folder + breadcrumb (folderPath) + subfolders + documents
 POST   /api/folders                         # { parentFolderId, name }
@@ -391,7 +453,12 @@ GET    /health
 GET    /health/storage                      # document-store reachability (503 if the Azure container is unreachable)
 ```
 
-`DELETE /api/folders/{folderId}` rejects the well-known root ("Home") folder with a 400. Folder
+Everything except `/api/settings`, `/health*` and `/auth/*` requires sign-in (401); content endpoints also require an
+active membership (403 while onboarding/pending; 403 "Your account has been closed." for closed accounts). Another
+workspace's ids are 404. Rename/delete are Admin+ (403 for Members). Every non-GET `/api/*` needs `X-CSRF: 1` (400).
+`/api/answers` rate limits are per user.
+
+`DELETE /api/folders/{folderId}` rejects the workspace's root ("Home") folder with a 400. Folder
 deletion walks the full descendant tree server-side (`IFolderRepository.GetDescendantIdsAsync`,
 already recursive) and deletes every document found anywhere in that subtree via
 `IDocumentService.DeleteDocumentsAsync` before removing the folder records themselves. Embeddings are a
@@ -424,20 +491,26 @@ converter registered in `Program.cs`), e.g. `"searchScope": "CurrentFolderAndSub
 
 ## Out of scope for this version
 
-Authentication/authorization, per-user document spaces,
-server-side conversation history, search history/pagination, hybrid keyword search, file rename, move,
+Organization SSO (designed to slot in — auth design §4 decision 25), multiple workspaces per user, email invites,
+folder/document-level permissions, deleting workspaces, server-side conversation history, search history/pagination, hybrid keyword search, file rename, move,
 bulk operations, document previews, audit logging, background job queues (the current dispatcher
 is in-process fire-and-forget, not a persistent queue). See [design.md](./.claude/technical-designs/design.md) §9 and §21 for the
 full future-enhancements list and the reasoning behind each deferral. (Folder *rename* and
 *deletion* — including cascade delete of a folder's subtree — are in scope; see the API contract
-above.)
+above. So are sign-in, individual/organization workspaces and roles.)
 
 ## Known gaps and conventions
 
-- **Tests (`CitadelIQ.Tests`, xUnit):** `dotnet test CitadelIQ.slnx`. `Unit/` covers `TextChunker` and the text
-  extractors (no Docker needed). `Integration/` starts a throwaway `pgvector/pgvector:pg17` container via Testcontainers
-  (**Docker must be running**), gives every test its own freshly-migrated database, and exercises the real
-  repositories/services: migrations, upload→process, page/sheet locations, failure cleanup, vector search ranking,
+- **Tests (`CitadelIQ.Tests`, xUnit):** `dotnet test CitadelIQ.slnx`. `Unit/` covers `TextChunker`, the text
+  extractors, membership rules, join codes, entities, `CurrentUserContext` and auth options (no Docker needed:
+  `dotnet test CitadelIQ.slnx --filter FullyQualifiedName~Unit`). `Integration/` starts a throwaway `pgvector/pgvector:pg17`
+  container via Testcontainers (**Docker must be running**), creates the restricted `citadeliq_app` role, gives every test
+  its own freshly-migrated database (migrations as superuser, services as `citadeliq_app`, so RLS is really enforced; raw
+  SQL helpers use the superuser) and a default user with an individual workspace (`app.DefaultUser`, `app.Root`;
+  `RunAsAsync(user, …)` for anyone else), and exercises the real repositories/services: workspace isolation for every
+  entry point, RLS on its own, composite FKs, onboarding, organization admin incl. concurrent last-Owner changes, roles,
+  uploader display, and (`AuthApiTests` via `Support/ApiFactory` + `TestAuthHandler`) 401/403/404, CSRF, closed accounts,
+  join-code rate limiting and the startup guards; plus migrations, upload→process, page/sheet locations, failure cleanup, vector search ranking,
   scopes, `MinSimilarity`, Ready-only search, folder uniqueness (incl. concurrent creates) and cascade delete.
   Only OpenAI (`FakeEmbeddingService`, deterministic topic-axis vectors) and the background dispatcher (no-op;
   tests call `ProcessDocumentAsync`) are replaced. `Integration/AnswersApiTests` drive the real pipeline through `WebApplicationFactory` (SSE framing/order, error events, 400/404/503/429, settings) with `FakeChatCompletionService`; `Unit/RagUnitTests` cover the RAG pieces. No frontend tests yet.

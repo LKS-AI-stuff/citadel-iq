@@ -1,9 +1,11 @@
 using AutoMapper;
+using CitadelIQ.Application.Accounts;
 using CitadelIQ.Application.Common;
 using CitadelIQ.Application.Documents;
 using CitadelIQ.Application.Dtos;
 using CitadelIQ.Application.Interfaces;
 using CitadelIQ.Domain.Entities;
+using CitadelIQ.Domain.Enums;
 
 namespace CitadelIQ.Application.Folders;
 
@@ -12,8 +14,21 @@ public class FolderService(
     IDocumentRepository documentRepository,
     IDocumentService documentService,
     FolderPathBuilder folderPathBuilder,
+    UploaderLookup uploaderLookup,
+    ICurrentUser currentUser,
     IMapper mapper) : IFolderService
 {
+    // Every lookup below goes through the repositories, which only ever see the current workspace's rows (EF
+    // query filter + row-level security): another workspace's folder id is simply "not found".
+
+    public async Task<FolderDto> GetRootAsync(CancellationToken cancellationToken = default)
+    {
+        var root = await folderRepository.GetRootAsync(cancellationToken)
+            ?? throw new NotFoundException("Folder not found.");
+
+        return mapper.Map<FolderDto>(root);
+    }
+
     public async Task<FolderDto> GetByIdAsync(Guid folderId, CancellationToken cancellationToken = default)
     {
         var folder = await folderRepository.GetByIdAsync(folderId, cancellationToken)
@@ -30,17 +45,20 @@ public class FolderService(
         var folderPath = await folderPathBuilder.BuildAsync(folder, cancellationToken);
         var subfolders = await folderRepository.GetChildrenAsync(folder.Id, cancellationToken);
         var documents = await documentRepository.GetByFolderIdAsync(folder.Id, cancellationToken);
+        var uploaders = await uploaderLookup.GetAsync(documents.Select(d => d.UploadedByUserId), cancellationToken);
 
         return new FolderContentsDto(
             mapper.Map<FolderDto>(folder),
             folderPath,
             mapper.Map<List<FolderDto>>(subfolders),
-            mapper.Map<List<DocumentSummaryDto>>(documents));
+            documents
+                .Select(d => mapper.Map<DocumentSummaryDto>(d) with { UploadedBy = UploaderLookup.Find(uploaders, d.UploadedByUserId) })
+                .ToList());
     }
 
     public async Task<FolderDto> CreateFolderAsync(Guid parentFolderId, string name, CancellationToken cancellationToken = default)
     {
-        _ = await folderRepository.GetByIdAsync(parentFolderId, cancellationToken)
+        var parent = await folderRepository.GetByIdAsync(parentFolderId, cancellationToken)
             ?? throw new NotFoundException("Parent folder not found.");
 
         if (await folderRepository.ExistsWithNameAsync(parentFolderId, name, cancellationToken))
@@ -48,7 +66,7 @@ public class FolderService(
             throw new ValidationException($"A folder named \"{name.Trim()}\" already exists here.");
         }
 
-        var folder = Folder.Create(name, parentFolderId);
+        var folder = Folder.CreateChild(parent, name);
         await folderRepository.AddAsync(folder, cancellationToken);
         return mapper.Map<FolderDto>(folder);
     }
@@ -58,7 +76,9 @@ public class FolderService(
         var folder = await folderRepository.GetByIdAsync(folderId, cancellationToken)
             ?? throw new NotFoundException("Folder not found.");
 
-        if (folder.Id == Folder.RootId)
+        currentUser.EnsureRole(WorkspaceRole.Admin, "rename folders");
+
+        if (folder.IsRoot)
         {
             throw new ValidationException("The Home folder cannot be renamed.");
         }
@@ -81,7 +101,9 @@ public class FolderService(
         var folder = await folderRepository.GetByIdAsync(folderId, cancellationToken)
             ?? throw new NotFoundException("Folder not found.");
 
-        if (folder.Id == Folder.RootId)
+        currentUser.EnsureRole(WorkspaceRole.Admin, "delete folders");
+
+        if (folder.IsRoot)
         {
             throw new ValidationException("The Home folder cannot be deleted.");
         }

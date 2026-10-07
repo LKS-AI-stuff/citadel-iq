@@ -10,4 +10,5 @@ public record DocumentSummaryDto(
     long SizeBytes,
     DateTimeOffset UploadedAtUtc,
     ProcessingStatus Status,
-    string? FailureReason);
+    string? FailureReason,
+    UploaderDto? UploadedBy = null);

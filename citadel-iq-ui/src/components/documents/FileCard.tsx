@@ -4,12 +4,14 @@ import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import { FileIcon } from './FileIcon';
 import { ProcessingStatusIcon } from './ProcessingStatusIcon';
+import { UploaderCaption } from './UploaderCaption';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { GlassSurface } from '../common/GlassSurface';
 import { IconBadge } from '../common/IconBadge';
 import { useToast } from '../common/ToastProvider';
 import { documentsApi } from '../../api/documentsApi';
 import { useDeleteDocument } from '../../hooks/useDeleteDocument';
+import { useSession } from '../../session/useSession';
 import { actionIconButtonSx } from '../../theme/glass';
 import type { DocumentSummaryDto } from '../../types/folder';
 
@@ -38,6 +40,8 @@ export function FileCard({ document, animationDelayMs = 0, onDeleted }: FileCard
   const [isConfirmOpen, setConfirmOpen] = useState(false);
   const { deleteDocument, isDeleting } = useDeleteDocument();
   const { showToast } = useToast();
+  // Members can't delete; the server enforces it, the UI just doesn't offer it.
+  const { can } = useSession();
 
   const handleDownload = () => {
     window.open(documentsApi.getDownloadUrl(document.id), '_blank');
@@ -87,6 +91,7 @@ export function FileCard({ document, animationDelayMs = 0, onDeleted }: FileCard
               {formatSize(document.sizeBytes)} · {formatDate(document.uploadedAtUtc)}
             </Typography>
           </Stack>
+          <UploaderCaption uploadedBy={document.uploadedBy} />
         </Stack>
         <Stack direction="row" sx={{ gap: 0.5 }}>
           <Tooltip title={isReady ? 'Download' : 'Available once processing completes'}>
@@ -105,19 +110,21 @@ export function FileCard({ document, animationDelayMs = 0, onDeleted }: FileCard
               </IconButton>
             </span>
           </Tooltip>
-          <Tooltip title="Delete">
-            <IconButton
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation();
-                setConfirmOpen(true);
-              }}
-              aria-label="Delete"
-              sx={actionIconButtonSx(theme.palette.error.main)}
-            >
-              <DeleteOutlineIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+          {can.deleteContent && (
+            <Tooltip title="Delete">
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmOpen(true);
+                }}
+                aria-label="Delete"
+                sx={actionIconButtonSx(theme.palette.error.main)}
+              >
+                <DeleteOutlineIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
         </Stack>
       </GlassSurface>
 

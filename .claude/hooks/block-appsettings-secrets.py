@@ -49,6 +49,24 @@ def main() -> None:
         )
         sys.exit(2)
 
+    if re.search(r'"ClientSecret"\s*:\s*"[^"]+"', content):
+        print(
+            f"Blocked: this write adds an OIDC client secret to {file_path}. "
+            'Set Authentication:Oidc:ClientSecret via `dotnet user-secrets` or the '
+            "Authentication__Oidc__ClientSecret environment variable — never in appsettings.json.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if re.search(r"Password=[^;\"]+", content):
+        print(
+            f"Blocked: this write adds a database password to {file_path}. "
+            "Connection strings (ConnectionStrings:CitadelIQ / CitadelIQMigrations) go in user-secrets or "
+            "environment variables — never in appsettings.json.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     sys.exit(0)
 
 

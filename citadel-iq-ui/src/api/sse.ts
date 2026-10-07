@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError } from './apiClient';
+import { API_BASE_URL, ApiError, CSRF_HEADERS, reportAuthFailure } from './apiClient';
 
 export interface SseMessage {
   event: string;
@@ -39,13 +39,15 @@ export async function postSse(
 ): Promise<void> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...CSRF_HEADERS },
     body: JSON.stringify(body),
     signal,
   });
 
   if (!response.ok) {
     const problem = await response.json().catch(() => null);
+    reportAuthFailure(response.status, problem?.title);
     throw new ApiError(problem?.title ?? 'Something went wrong. Please try again.', response.status);
   }
 

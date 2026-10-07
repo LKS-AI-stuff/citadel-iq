@@ -16,12 +16,15 @@ public class InMemoryFolderRepository : IFolderRepository
 
     public InMemoryFolderRepository()
     {
-        var root = Folder.CreateRoot();
+        var root = Folder.CreateRoot(Guid.Empty);
         _folders[root.Id] = root;
     }
 
     public Task<Folder?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
         Task.FromResult(_folders.GetValueOrDefault(id));
+
+    public Task<Folder?> GetRootAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(_folders.Values.FirstOrDefault(f => f.IsRoot));
 
     public Task<IReadOnlyList<Folder>> GetChildrenAsync(Guid parentFolderId, CancellationToken cancellationToken = default)
     {

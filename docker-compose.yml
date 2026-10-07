@@ -9,8 +9,12 @@ services:
       POSTGRES_DB: citadeliq
       POSTGRES_USER: citadeliq
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # Password of the restricted runtime role (citadeliq_app), created on first start by the init script.
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Runs only when the volume is first initialized; on an existing volume create the role by hand (README).
+      - ./deploy/postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U citadeliq -d citadeliq"]
       interval: 5s
@@ -27,7 +31,16 @@ services:
       db:
         condition: service_healthy
     environment:
-      ConnectionStrings__CitadelIQ: Host=db;Port=5432;Database=citadeliq;Username=citadeliq;Password=${POSTGRES_PASSWORD}
+      # Runtime: the restricted role (the API refuses to start as a superuser / BYPASSRLS role).
+      ConnectionStrings__CitadelIQ: Host=db;Port=5432;Database=citadeliq;Username=citadeliq_app;Password=${APP_DB_PASSWORD}
+      # Migrations only: the owner role.
+      ConnectionStrings__CitadelIQMigrations: Host=db;Port=5432;Database=citadeliq;Username=citadeliq;Password=${POSTGRES_PASSWORD}
+      Authentication__Mode: Oidc
+      Authentication__Oidc__Authority: ${OIDC_AUTHORITY:?set OIDC_AUTHORITY in .env}
+      Authentication__Oidc__ClientId: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID in .env}
+      Authentication__Oidc__ClientSecret: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET in .env}
+      # nginx (the ui container) is the only proxy; its forwarded host/scheme build the OIDC redirect URI.
+      ForwardedHeaders__KnownProxies__0: ${UI_PROXY_IP:-172.28.0.10}
       OpenAI__ApiKey: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
       OpenAI__EmbeddingModel: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       OpenAI__ChatModel: ${OPENAI_CHAT_MODEL:-gpt-5.6-luna}
@@ -39,24 +52,33 @@ services:
       Storage__AzureBlob__AccountName: ${AZURE_STORAGE_ACCOUNT:-}
       Storage__AzureBlob__ContainerName: ${AZURE_STORAGE_CONTAINER:-documents}
       Storage__AzureBlob__ConnectionString: ${AZURE_STORAGE_CONNECTION_STRING:-}
-      Cors__AllowedOrigins__0: ${UI_ORIGIN:-http://localhost:8080}
       Search__MinSimilarity: ${SEARCH_MIN_SIMILARITY:-0.25}
       Database__MigrateOnStartup: "true"
     volumes:
       - documents:/app/App_Data/documents
-    ports:
-      - "${API_PORT:-5157}:8080"
+    # No published port: the browser reaches the API only through nginx (same origin).
+    networks:
+      default:
 
   ui:
     build:
       context: ./citadel-iq-ui
-      args:
-        VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:5157}
     restart: unless-stopped
     depends_on:
       - api
     ports:
+      # Put TLS in front of this (or on nginx) for anything but localhost: the session cookie is Secure and
+      # Entra only accepts https redirect URIs for non-localhost hosts.
       - "${UI_PORT:-8080}:80"
+    networks:
+      default:
+        ipv4_address: ${UI_PROXY_IP:-172.28.0.10}
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${COMPOSE_SUBNET:-172.28.0.0/16}
 
 volumes:
   pgdata:

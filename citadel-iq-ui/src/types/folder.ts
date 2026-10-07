@@ -12,6 +12,12 @@ export interface FolderDto {
   parentFolderId: string | null;
 }
 
+/** Who uploaded a document; `isFormerMember` once they have left the organization. */
+export interface UploaderDto {
+  displayName: string;
+  isFormerMember: boolean;
+}
+
 export interface DocumentSummaryDto {
   id: string;
   folderId: string;
@@ -21,6 +27,7 @@ export interface DocumentSummaryDto {
   uploadedAtUtc: string;
   status: ProcessingStatus;
   failureReason: string | null;
+  uploadedBy: UploaderDto | null;
 }
 
 export interface FolderPathSegmentDto {

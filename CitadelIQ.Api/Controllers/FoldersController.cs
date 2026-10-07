@@ -1,7 +1,6 @@
 using CitadelIQ.Api.Contracts;
 using CitadelIQ.Application.Dtos;
 using CitadelIQ.Application.Folders;
-using CitadelIQ.Domain.Entities;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CitadelIQ.Api.Controllers;
@@ -10,9 +9,13 @@ namespace CitadelIQ.Api.Controllers;
 [Route("api/folders")]
 public class FoldersController(IFolderService folderService) : ControllerBase
 {
-    /// <summary>The well-known id of the Home folder, so the frontend can bootstrap without a lookup.</summary>
+    /// <summary>The id of the caller's workspace root ("Home") folder.</summary>
     [HttpGet("root")]
-    public ActionResult<object> GetRootId() => Ok(new { folderId = Folder.RootId });
+    public async Task<ActionResult<object>> GetRootId(CancellationToken cancellationToken)
+    {
+        var root = await folderService.GetRootAsync(cancellationToken);
+        return Ok(new { folderId = root.Id });
+    }
 
     [HttpGet("{folderId:guid}")]
     public async Task<ActionResult<FolderDto>> GetById(Guid folderId, CancellationToken cancellationToken)

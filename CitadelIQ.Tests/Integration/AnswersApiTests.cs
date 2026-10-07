@@ -1,12 +1,8 @@
 using System.Net;
-using Microsoft.AspNetCore.Hosting;
 using System.Net.Http.Json;
 using System.Text.Json;
 using CitadelIQ.Application.Interfaces;
-using CitadelIQ.Domain.Entities;
 using CitadelIQ.Tests.Support;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
 
 namespace CitadelIQ.Tests.Integration;
 
@@ -14,48 +10,16 @@ namespace CitadelIQ.Tests.Integration;
 [Collection(PostgresCollection.Name)]
 public class AnswersApiTests(PostgresFixture postgres)
 {
-    private sealed class ApiFactory : WebApplicationFactory<Program>
-    {
-        public FakeChatCompletionService Chat { get; } = new();
-        public FakeEmbeddingService Embeddings { get; } = new();
+    private Guid _root;
 
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            builder.UseEnvironment("Testing"); // don't pick up the developer's user-secrets
-            builder.ConfigureTestServices(services =>
-            {
-                services.AddSingleton<IChatCompletionService>(Chat);
-                services.AddSingleton<IOpenAIEmbeddingService>(Embeddings);
-            });
-        }
-    }
-
-    /// <summary>Program.cs reads configuration eagerly, so settings are passed as environment variables that
-    /// exist only while the host is built.</summary>
-    private static ApiFactory CreateFactory(string connectionString, Dictionary<string, string>? settings = null)
-    {
-        var env = new Dictionary<string, string>(settings ?? []) { ["ConnectionStrings__CitadelIQ"] = connectionString };
-        foreach (var (k, v) in env) Environment.SetEnvironmentVariable(k, v);
-        try
-        {
-            var factory = new ApiFactory();
-            _ = factory.Server; // build the host while the variables are set
-            return factory;
-        }
-        finally
-        {
-            foreach (var k in env.Keys) Environment.SetEnvironmentVariable(k, null);
-        }
-    }
-
-    private static HttpRequestMessage AskRequest(string question, string? scope = null, object[]? history = null) =>
+    private HttpRequestMessage AskRequest(string question, string? scope = null, object[]? history = null) =>
         new(HttpMethod.Post, "/api/answers/stream")
         {
             Content = JsonContent.Create(new
             {
                 question,
-                currentFolderId = Folder.RootId,
-                searchScope = scope ?? "EntirePortal",
+                currentFolderId = _root,
+                searchScope = scope ?? "EntireWorkspace",
                 history = history ?? []
             })
         };
@@ -69,27 +33,29 @@ public class AnswersApiTests(PostgresFixture postgres)
             return (lines[0][7..], JsonDocument.Parse(lines[1][6..]).RootElement.Clone());
         }).ToList();
 
-    private async Task<(TestApp App, ApiFactory Factory)> SetUpAsync(Dictionary<string, string>? settings = null, bool seed = true)
+    private async Task<(TestApp App, ApiFactory Factory, HttpClient Client)> SetUpAsync(Dictionary<string, string>? settings = null, bool seed = true)
     {
         var app = await postgres.CreateAppAsync();
+        _root = app.Root;
         if (seed)
         {
-            await app.UploadAndProcessAsync(Folder.RootId, "finance.txt", TestFiles.Text("revenue grew"));
+            await app.UploadAndProcessAsync(app.Root, "finance.txt", TestFiles.Text("revenue grew"));
         }
 
-        return (app, CreateFactory(app.ConnectionString, settings));
+        var factory = ApiFactory.Create(app, settings);
+        return (app, factory, factory.CreateClientFor(app.DefaultUser));
     }
 
     [Fact]
     public async Task Normal_answer_streams_events_in_order()
     {
-        var (app, factory) = await SetUpAsync();
+        var (app, factory, client) = await SetUpAsync();
         await using var _ = app;
         using var __ = factory;
         factory.Chat.StreamDeltas = ["Revenue ", "grew [1]."];
         factory.Chat.StreamUsage = new ChatUsage(10, 5);
 
-        var response = await factory.CreateClient().SendAsync(AskRequest("revenue?"));
+        var response = await client.SendAsync(AskRequest("revenue?"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.StartsWith("text/event-stream", response.Content.Headers.ContentType!.ToString());
@@ -110,12 +76,12 @@ public class AnswersApiTests(PostgresFixture postgres)
     [Fact]
     public async Task Sentinel_produces_notfound_then_done()
     {
-        var (app, factory) = await SetUpAsync();
+        var (app, factory, client) = await SetUpAsync();
         await using var _ = app;
         using var __ = factory;
         factory.Chat.StreamDeltas = ["NOT_", "FOUND"];
 
-        var response = await factory.CreateClient().SendAsync(AskRequest("revenue?"));
+        var response = await client.SendAsync(AskRequest("revenue?"));
 
         var events = ParseSse(await response.Content.ReadAsStringAsync());
         Assert.Equal(["question", "sources", "notfound", "done"], events.Select(e => e.Name));
@@ -125,11 +91,11 @@ public class AnswersApiTests(PostgresFixture postgres)
     [Fact]
     public async Task No_sources_yields_notfound_without_calling_the_model()
     {
-        var (app, factory) = await SetUpAsync(seed: false);
+        var (app, factory, client) = await SetUpAsync(seed: false);
         await using var _ = app;
         using var __ = factory;
 
-        var response = await factory.CreateClient().SendAsync(AskRequest("revenue?"));
+        var response = await client.SendAsync(AskRequest("revenue?"));
 
         var events = ParseSse(await response.Content.ReadAsStringAsync());
         Assert.Equal(["question", "sources", "notfound", "done"], events.Select(e => e.Name));
@@ -140,13 +106,13 @@ public class AnswersApiTests(PostgresFixture postgres)
     [Fact]
     public async Task Upstream_failure_after_start_becomes_an_error_event()
     {
-        var (app, factory) = await SetUpAsync();
+        var (app, factory, client) = await SetUpAsync();
         await using var _ = app;
         using var __ = factory;
         factory.Chat.StreamDeltas = ["partial "];
         factory.Chat.FailAfterDeltas = true;
 
-        var response = await factory.CreateClient().SendAsync(AskRequest("revenue?"));
+        var response = await client.SendAsync(AskRequest("revenue?"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var events = ParseSse(await response.Content.ReadAsStringAsync());
@@ -157,10 +123,9 @@ public class AnswersApiTests(PostgresFixture postgres)
     [Fact]
     public async Task Pre_stream_errors_are_problem_details()
     {
-        var (app, factory) = await SetUpAsync();
+        var (app, factory, client) = await SetUpAsync();
         await using var _ = app;
         using var __ = factory;
-        var client = factory.CreateClient();
 
         var empty = await client.SendAsync(AskRequest("  "));
         Assert.Equal(HttpStatusCode.BadRequest, empty.StatusCode);
@@ -176,13 +141,12 @@ public class AnswersApiTests(PostgresFixture postgres)
     [Fact]
     public async Task Malformed_and_over_limit_requests_are_400()
     {
-        var (app, factory) = await SetUpAsync();
+        var (app, factory, client) = await SetUpAsync();
         await using var _ = app;
         using var __ = factory;
-        var client = factory.CreateClient();
 
         var nullTurn = await client.PostAsync("/api/answers/stream", new StringContent(
-            "{\"question\":\"q\",\"currentFolderId\":\"00000000-0000-0000-0000-000000000000\",\"searchScope\":\"EntirePortal\",\"history\":[null]}",
+            $"{{\"question\":\"q\",\"currentFolderId\":\"{_root}\",\"searchScope\":\"EntireWorkspace\",\"history\":[null]}}",
             System.Text.Encoding.UTF8, "application/json"));
         Assert.Equal(HttpStatusCode.BadRequest, nullTurn.StatusCode);
 
@@ -198,25 +162,25 @@ public class AnswersApiTests(PostgresFixture postgres)
     [Fact]
     public async Task Disabled_feature_returns_503()
     {
-        var (app, factory) = await SetUpAsync(new() { ["Rag__Enabled"] = "false" });
+        var (app, factory, client) = await SetUpAsync(new() { ["Rag__Enabled"] = "false" });
         await using var _ = app;
         using var __ = factory;
 
-        var response = await factory.CreateClient().SendAsync(AskRequest("revenue?"));
+        var response = await client.SendAsync(AskRequest("revenue?"));
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-        var settings = await factory.CreateClient().GetFromJsonAsync<JsonElement>("/api/settings");
+        var settings = await client.GetFromJsonAsync<JsonElement>("/api/settings");
         Assert.False(settings.GetProperty("askEnabled").GetBoolean());
     }
 
     [Fact]
     public async Task Settings_returns_only_the_client_safe_fields()
     {
-        var (app, factory) = await SetUpAsync(seed: false);
+        var (app, factory, client) = await SetUpAsync(seed: false);
         await using var _ = app;
         using var __ = factory;
 
-        var settings = await factory.CreateClient().GetFromJsonAsync<JsonElement>("/api/settings");
+        var settings = await client.GetFromJsonAsync<JsonElement>("/api/settings");
 
         Assert.Equal(["askEnabled", "maxHistoryChars", "maxHistoryTurns", "maxQuestionLength"],
             settings.EnumerateObject().Select(p => p.Name).Order().ToArray());
@@ -226,11 +190,10 @@ public class AnswersApiTests(PostgresFixture postgres)
     [Fact]
     public async Task Exceeding_the_request_window_returns_429_with_problem_details()
     {
-        var (app, factory) = await SetUpAsync(new() { ["Rag__RateLimit__PermitLimit"] = "2" });
+        var (app, factory, client) = await SetUpAsync(new() { ["Rag__RateLimit__PermitLimit"] = "2" });
         await using var _ = app;
         using var __ = factory;
         factory.Chat.StreamDeltas = ["ok [1]"];
-        var client = factory.CreateClient();
 
         Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(AskRequest("revenue?"))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(AskRequest("revenue?"))).StatusCode);
@@ -245,11 +208,10 @@ public class AnswersApiTests(PostgresFixture postgres)
     [Fact]
     public async Task A_parallel_stream_over_the_concurrency_cap_is_rejected_and_disconnect_cancels_upstream()
     {
-        var (app, factory) = await SetUpAsync(new() { ["Rag__RateLimit__MaxConcurrentStreams"] = "1" });
+        var (app, factory, client) = await SetUpAsync(new() { ["Rag__RateLimit__MaxConcurrentStreams"] = "1" });
         await using var _ = app;
         using var __ = factory;
         factory.Chat.StreamGate = new TaskCompletionSource();
-        var client = factory.CreateClient();
 
         // Headers arrive with the first SSE event, then the model call blocks on the gate.
         var first = await client.SendAsync(AskRequest("revenue?"), HttpCompletionOption.ResponseHeadersRead);

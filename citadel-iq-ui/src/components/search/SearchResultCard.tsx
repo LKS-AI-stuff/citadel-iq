@@ -1,6 +1,7 @@
 import { Box, ButtonBase, Chip, IconButton, LinearProgress, Stack, Tooltip, Typography, alpha, useTheme } from '@mui/material';
 import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
 import { FileIcon } from '../documents/FileIcon';
+import { UploaderCaption } from '../documents/UploaderCaption';
 import { GlassSurface } from '../common/GlassSurface';
 import { IconBadge } from '../common/IconBadge';
 import { actionIconButtonSx } from '../../theme/glass';
@@ -87,6 +88,7 @@ export function SearchResultCard({
           <Typography variant="caption" color="text.secondary">
             {result.folderPath}
           </Typography>
+          <UploaderCaption uploadedBy={result.uploadedBy} />
         </Box>
         {onDownload && (
           <Tooltip title="Download">

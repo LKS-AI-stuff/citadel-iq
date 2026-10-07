@@ -1,4 +1,5 @@
 using AutoMapper;
+using CitadelIQ.Application.Accounts;
 using CitadelIQ.Application.Common;
 using CitadelIQ.Application.Dtos;
 using CitadelIQ.Application.Interfaces;
@@ -19,6 +20,8 @@ public class DocumentService(
     ITextChunker textChunker,
     IFileValidator fileValidator,
     IDocumentProcessingDispatcher processingDispatcher,
+    ICurrentUser currentUser,
+    UploaderLookup uploaderLookup,
     IMapper mapper,
     ILogger<DocumentService> logger) : IDocumentService
 {
@@ -30,15 +33,15 @@ public class DocumentService(
         long sizeBytes,
         CancellationToken cancellationToken = default)
     {
-        _ = await folderRepository.GetByIdAsync(folderId, cancellationToken)
+        var folder = await folderRepository.GetByIdAsync(folderId, cancellationToken)
             ?? throw new NotFoundException("Folder not found.");
 
         fileValidator.Validate(fileName, sizeBytes);
 
-        var document = Document.Create(folderId, fileName, contentType, sizeBytes);
+        var document = Document.Create(folder, currentUser.RequireUserId(), fileName, contentType, sizeBytes);
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
 
-        await documentStorage.SaveAsync(document.Id, extension, content, cancellationToken);
+        await documentStorage.SaveAsync(document.WorkspaceId, document.Id, extension, content, cancellationToken);
 
         try
         {
@@ -50,7 +53,7 @@ public class DocumentService(
             // cleanup can fail too; log it and let the original exception propagate rather than replace it.
             try
             {
-                await documentStorage.DeleteAsync(document.Id, extension, CancellationToken.None);
+                await documentStorage.DeleteAsync(document.WorkspaceId, document.Id, extension, CancellationToken.None);
             }
             catch (Exception cleanupEx)
             {
@@ -60,9 +63,10 @@ public class DocumentService(
             throw;
         }
 
-        processingDispatcher.Dispatch(document.Id);
+        processingDispatcher.Dispatch(document.WorkspaceId, document.Id);
 
-        return mapper.Map<DocumentSummaryDto>(document);
+        var uploaders = await uploaderLookup.GetAsync([document.UploadedByUserId], cancellationToken);
+        return mapper.Map<DocumentSummaryDto>(document) with { UploadedBy = UploaderLookup.Find(uploaders, document.UploadedByUserId) };
     }
 
     public async Task ProcessDocumentAsync(Guid documentId, CancellationToken cancellationToken = default)
@@ -80,7 +84,7 @@ public class DocumentService(
             document.AdvanceTo(ProcessingStatus.ExtractingText);
             await documentRepository.UpdateAsync(document, cancellationToken);
 
-            await using var stream = await documentStorage.OpenReadAsync(document.Id, extension, cancellationToken);
+            await using var stream = await documentStorage.OpenReadAsync(document.WorkspaceId, document.Id, extension, cancellationToken);
             var sections = await textExtractionService.ExtractAsync(stream, extension, cancellationToken);
 
             if (sections.All(section => string.IsNullOrWhiteSpace(section.Text)))
@@ -107,7 +111,7 @@ public class DocumentService(
 
             for (var i = 0; i < textChunks.Count; i++)
             {
-                var chunk = DocumentChunk.Create(document.Id, i, textChunks[i].Text, textChunks[i].PageNumber, textChunks[i].SheetName);
+                var chunk = DocumentChunk.Create(document, i, textChunks[i].Text, textChunks[i].PageNumber, textChunks[i].SheetName);
                 chunks.Add(chunk);
                 embeddings.Add(DocumentEmbedding.Create(chunk.Id, vectors[i], embeddingService.ModelName));
             }
@@ -150,7 +154,7 @@ public class DocumentService(
             ?? throw new NotFoundException("Document not found.");
 
         var extension = Path.GetExtension(document.FileName).ToLowerInvariant();
-        var stream = await documentStorage.OpenReadAsync(document.Id, extension, cancellationToken);
+        var stream = await documentStorage.OpenReadAsync(document.WorkspaceId, document.Id, extension, cancellationToken);
 
         return (stream, document.FileName, document.ContentType);
     }
@@ -159,6 +163,8 @@ public class DocumentService(
     {
         var document = await documentRepository.GetByIdAsync(documentId, cancellationToken)
             ?? throw new NotFoundException("Document not found.");
+
+        currentUser.EnsureRole(WorkspaceRole.Admin, "delete documents");
 
         await DeleteDocumentsAsync([document], cancellationToken);
     }
@@ -179,7 +185,7 @@ public class DocumentService(
             var extension = Path.GetExtension(document.FileName).ToLowerInvariant();
             try
             {
-                await documentStorage.DeleteAsync(document.Id, extension, cancellationToken);
+                await documentStorage.DeleteAsync(document.WorkspaceId, document.Id, extension, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

@@ -12,6 +12,7 @@ import { IconBadge } from '../common/IconBadge';
 import { useToast } from '../common/ToastProvider';
 import { useDeleteFolder } from '../../hooks/useDeleteFolder';
 import { useRenameFolder } from '../../hooks/useRenameFolder';
+import { useSession } from '../../session/useSession';
 import { actionIconButtonSx, folderAccentColor as getFolderAccentColor } from '../../theme/glass';
 import type { FolderDto } from '../../types/folder';
 
@@ -32,6 +33,8 @@ export function FolderCard({ folder, onOpen, onDeleted, onRenamed, animationDela
   const { deleteFolder, isDeleting } = useDeleteFolder();
   const { renameFolder, isRenaming } = useRenameFolder();
   const { showToast } = useToast();
+  // Rename/Delete are Admin and Owner only; the server enforces it, the UI just doesn't offer them to Members.
+  const { can } = useSession();
 
   const handleDelete = async () => {
     try {
@@ -170,32 +173,36 @@ export function FolderCard({ folder, onOpen, onDeleted, onRenamed, animationDela
                   <ArrowForwardIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="Rename">
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startEditing();
-                  }}
-                  aria-label="Rename"
-                  sx={actionIconButtonSx(folderAccentColor)}
-                >
-                  <EditOutlinedIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Delete">
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setConfirmOpen(true);
-                  }}
-                  aria-label="Delete"
-                  sx={actionIconButtonSx(theme.palette.error.main)}
-                >
-                  <DeleteOutlineIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
+              {can.renameFolders && (
+                <Tooltip title="Rename">
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startEditing();
+                    }}
+                    aria-label="Rename"
+                    sx={actionIconButtonSx(folderAccentColor)}
+                  >
+                    <EditOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {can.deleteContent && (
+                <Tooltip title="Delete">
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmOpen(true);
+                    }}
+                    aria-label="Delete"
+                    sx={actionIconButtonSx(theme.palette.error.main)}
+                  >
+                    <DeleteOutlineIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              )}
             </>
           )}
         </Stack>

@@ -23,10 +23,13 @@ public class DocumentConfiguration : IEntityTypeConfiguration<Document>
 
         builder.Property(d => d.FailureReason).HasMaxLength(1024);
 
+        // In the database: composite (WorkspaceId, FolderId) → Folders (WorkspaceId, Id).
         builder.HasOne<Folder>()
             .WithMany()
             .HasForeignKey(d => d.FolderId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne<UserAccount>().WithMany().HasForeignKey(d => d.UploadedByUserId);
 
         builder.HasIndex(d => d.FolderId);
     }

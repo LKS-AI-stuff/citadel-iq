@@ -313,7 +313,8 @@ can be added later without reworking the Application layer.
     shown only when the current folder isn't Home, since relying on the breadcrumbs alone to go up
     a level isn't discoverable for every user. `useSearch`'s default `SearchScope` changed from
     `EntirePortal` to `CurrentFolder`, and `SearchScopeSelector`'s option order changed to match
-    (This folder → +Subfolders → Entire portal).
+    (This folder → +Subfolders → Entire portal). *(Later renamed `EntireWorkspace` / "Entire workspace" when workspaces were introduced — see
+    authentication-and-workspaces.md.)*
 
 **Verified with a real OpenAI key** (set via `dotnet user-secrets` during this session): a
 `.txt` document uploaded, extracted, chunked, embedded, and reached `Ready`; a semantic search for

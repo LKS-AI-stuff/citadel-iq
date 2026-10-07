@@ -3,9 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-# Vite bakes this in at build time: the URL the *browser* uses to reach the API.
-ARG VITE_API_URL=http://localhost:5157
-ENV VITE_API_URL=$VITE_API_URL
+# No API URL is baked in: nginx proxies /api, /auth and the OIDC callbacks to the api container (same origin).
 RUN npm run build
 
 FROM nginx:alpine

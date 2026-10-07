@@ -6,6 +6,9 @@ public interface IFolderRepository
 {
     Task<Folder?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 
+    /// <summary>The current workspace's root ("Home") folder.</summary>
+    Task<Folder?> GetRootAsync(CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<Folder>> GetChildrenAsync(Guid parentFolderId, CancellationToken cancellationToken = default);
 
     /// <summary>Returns all descendant folder ids of <paramref name="folderId"/>, not including itself.</summary>

@@ -11,6 +11,9 @@ public class FolderRepository(CitadelIQDbContext db) : IFolderRepository
     public Task<Folder?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.Folders.FirstOrDefaultAsync(f => f.Id == id, cancellationToken);
 
+    public Task<Folder?> GetRootAsync(CancellationToken cancellationToken = default) =>
+        db.Folders.AsNoTracking().FirstOrDefaultAsync(f => f.ParentFolderId == null, cancellationToken);
+
     public async Task<IReadOnlyList<Folder>> GetChildrenAsync(Guid parentFolderId, CancellationToken cancellationToken = default) =>
         await db.Folders
             .AsNoTracking()
@@ -20,7 +23,7 @@ public class FolderRepository(CitadelIQDbContext db) : IFolderRepository
 
     public async Task<IReadOnlyList<Guid>> GetDescendantIdsAsync(Guid folderId, CancellationToken cancellationToken = default)
     {
-        // One query for the (id, parent) edges, then walk the tree in memory.
+        // One query for the (id, parent) edges of the current workspace (query filter), then walk the tree in memory.
         var edges = await db.Folders
             .AsNoTracking()
             .Where(f => f.ParentFolderId != null)

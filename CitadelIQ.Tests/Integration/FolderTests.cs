@@ -1,6 +1,5 @@
 using CitadelIQ.Application.Common;
 using CitadelIQ.Application.Folders;
-using CitadelIQ.Domain.Entities;
 using CitadelIQ.Tests.Support;
 
 namespace CitadelIQ.Tests.Integration;
@@ -12,10 +11,10 @@ public class FolderTests(PostgresFixture postgres)
     public async Task Sibling_folder_names_must_be_unique_ignoring_case_but_can_repeat_under_other_parents()
     {
         await using var app = await postgres.CreateAppAsync();
-        var a = await app.CreateFolderAsync(Folder.RootId, "A");
-        await app.CreateFolderAsync(Folder.RootId, "Reports");
+        var a = await app.CreateFolderAsync(app.Root, "A");
+        await app.CreateFolderAsync(app.Root, "Reports");
 
-        var ex = await Assert.ThrowsAsync<ValidationException>(() => app.CreateFolderAsync(Folder.RootId, "reports"));
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => app.CreateFolderAsync(app.Root, "reports"));
         Assert.Equal("A folder named \"reports\" already exists here.", ex.Message);
 
         await app.CreateFolderAsync(a.Id, "Reports"); // different parent: fine
@@ -30,7 +29,7 @@ public class FolderTests(PostgresFixture postgres)
         {
             try
             {
-                await app.CreateFolderAsync(Folder.RootId, "Race");
+                await app.CreateFolderAsync(app.Root, "Race");
                 return true;
             }
             catch (ValidationException)
@@ -49,8 +48,8 @@ public class FolderTests(PostgresFixture postgres)
     public async Task Rename_rejects_a_sibling_collision_but_allows_a_case_only_change()
     {
         await using var app = await postgres.CreateAppAsync();
-        var one = await app.CreateFolderAsync(Folder.RootId, "One");
-        await app.CreateFolderAsync(Folder.RootId, "Two");
+        var one = await app.CreateFolderAsync(app.Root, "One");
+        await app.CreateFolderAsync(app.Root, "Two");
 
         await Assert.ThrowsAsync<ValidationException>(() =>
             app.RunAsync(sp => sp.GetRequiredService<IFolderService>().RenameFolderAsync(one.Id, "two")));
@@ -65,18 +64,18 @@ public class FolderTests(PostgresFixture postgres)
         await using var app = await postgres.CreateAppAsync();
 
         await Assert.ThrowsAsync<ValidationException>(() =>
-            app.RunAsync(sp => sp.GetRequiredService<IFolderService>().RenameFolderAsync(Folder.RootId, "Elsewhere")));
+            app.RunAsync(sp => sp.GetRequiredService<IFolderService>().RenameFolderAsync(app.Root, "Elsewhere")));
         await Assert.ThrowsAsync<ValidationException>(() =>
-            app.RunAsync(sp => sp.GetRequiredService<IFolderService>().DeleteFolderAsync(Folder.RootId)));
+            app.RunAsync(sp => sp.GetRequiredService<IFolderService>().DeleteFolderAsync(app.Root)));
     }
 
     [Fact]
     public async Task Deleting_a_folder_removes_its_whole_subtree_documents_chunks_and_files()
     {
         await using var app = await postgres.CreateAppAsync();
-        var finance = await app.CreateFolderAsync(Folder.RootId, "Finance");
+        var finance = await app.CreateFolderAsync(app.Root, "Finance");
         var reports = await app.CreateFolderAsync(finance.Id, "Reports");
-        var keep = await app.CreateFolderAsync(Folder.RootId, "Keep");
+        var keep = await app.CreateFolderAsync(app.Root, "Keep");
         var topDoc = await app.UploadAndProcessAsync(finance.Id, "top.txt", TestFiles.Text("revenue"));
         var deepDoc = await app.UploadAndProcessAsync(reports.Id, "deep.txt", TestFiles.Text("revenue"));
         await app.UploadAndProcessAsync(keep.Id, "kept.txt", TestFiles.Text("vacation"));
@@ -86,15 +85,15 @@ public class FolderTests(PostgresFixture postgres)
         Assert.Equal(2, await app.ScalarAsync<long>("SELECT count(*) FROM \"Folders\"")); // Home + Keep
         Assert.Equal(["kept.txt"], (await app.ColumnAsync("SELECT \"FileName\" FROM \"Documents\"")).Cast<string>());
         Assert.Equal(1, await app.ScalarAsync<long>("SELECT count(DISTINCT \"DocumentId\") FROM \"DocumentChunks\""));
-        Assert.False(File.Exists(Path.Combine(app.DocumentsDirectory, $"{topDoc}.txt")));
-        Assert.False(File.Exists(Path.Combine(app.DocumentsDirectory, $"{deepDoc}.txt")));
+        Assert.False(File.Exists(app.StoredFilePath(app.DefaultWorkspaceId, topDoc, ".txt")));
+        Assert.False(File.Exists(app.StoredFilePath(app.DefaultWorkspaceId, deepDoc, ".txt")));
     }
 
     [Fact]
     public async Task Folder_contents_list_subfolders_documents_and_the_breadcrumb()
     {
         await using var app = await postgres.CreateAppAsync();
-        var finance = await app.CreateFolderAsync(Folder.RootId, "Finance");
+        var finance = await app.CreateFolderAsync(app.Root, "Finance");
         var reports = await app.CreateFolderAsync(finance.Id, "Reports");
         await app.UploadAsync(finance.Id, "budget.txt", TestFiles.Text("x"));
 

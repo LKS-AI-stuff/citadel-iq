@@ -23,12 +23,14 @@ public class DocumentChunkConfiguration(int embeddingDimension) : IEntityTypeCon
         // At most one of PageNumber (PDF) / SheetName (XLSX) is set; enforced by a CHECK in the migration.
         builder.ToTable(t => t.HasCheckConstraint("CK_DocumentChunks_PageOrSheet", "\"PageNumber\" IS NULL OR \"SheetName\" IS NULL"));
 
+        // In the database: composite (WorkspaceId, DocumentId) → Documents (WorkspaceId, Id).
         builder.HasOne<Document>()
             .WithMany()
             .HasForeignKey(c => c.DocumentId)
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(c => new { c.DocumentId, c.ChunkIndex });
+        builder.HasIndex(c => c.WorkspaceId);
 
         // pgvector column: fixed-dimension vector, nullable because chunks are inserted before
         // their embeddings are attached (the document only turns Ready after both).

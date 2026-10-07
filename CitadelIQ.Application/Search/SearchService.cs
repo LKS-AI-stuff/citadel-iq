@@ -1,3 +1,4 @@
+using CitadelIQ.Application.Accounts;
 using CitadelIQ.Application.Common;
 using CitadelIQ.Application.Dtos;
 using CitadelIQ.Application.Folders;
@@ -14,6 +15,7 @@ public class SearchService(
     IVectorSearchRepository vectorSearchRepository,
     IOpenAIEmbeddingService embeddingService,
     FolderPathBuilder folderPathBuilder,
+    UploaderLookup uploaderLookup,
     IOptions<SearchOptions> searchOptions,
     ILogger<SearchService> logger) : ISearchService
 {
@@ -46,6 +48,7 @@ public class SearchService(
 
         logger.LogInformation("Vector search completed with {ResultCount} results", matches.Count);
 
+        var uploaders = await uploaderLookup.GetAsync(matches.Select(m => m.UploadedByUserId), cancellationToken);
         var folderPathCache = new Dictionary<Guid, string>();
         var results = new List<SearchResultDto>(matches.Count);
 
@@ -62,18 +65,20 @@ public class SearchService(
                 match.ChunkIndex,
                 match.PageNumber,
                 match.SheetName,
-                match.SimilarityScore));
+                match.SimilarityScore,
+                UploaderLookup.Find(uploaders, match.UploadedByUserId)));
         }
 
         return results;
     }
 
-    /// <summary>Returns the folder ids to restrict the search to, or <c>null</c> for the entire portal.</summary>
+    /// <summary>Returns the folder ids to restrict the search to, or <c>null</c> for the entire workspace (the
+    /// repository only ever sees the current workspace's rows, so "no folder filter" never crosses workspaces).</summary>
     private async Task<IReadOnlyCollection<Guid>?> ResolveEligibleFolderIdsAsync(SearchRequestDto request, CancellationToken cancellationToken)
     {
         switch (request.SearchScope)
         {
-            case SearchScope.EntirePortal:
+            case SearchScope.EntireWorkspace:
                 return null;
 
             case SearchScope.CurrentFolder:

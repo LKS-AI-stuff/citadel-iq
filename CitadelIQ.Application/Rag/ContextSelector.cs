@@ -30,7 +30,7 @@ public class ContextSelector(IOptions<RagOptions> options)
             total += r.ChunkText.Length;
             sources.Add(new AnswerSourceDto(
                 sources.Count + 1, r.DocumentId, r.FileName, r.FolderPath, r.ContentType,
-                r.ChunkText, r.ChunkIndex, r.PageNumber, r.SheetName, r.SimilarityScore));
+                r.ChunkText, r.ChunkIndex, r.PageNumber, r.SheetName, r.SimilarityScore, r.UploadedBy));
         }
 
         return sources;

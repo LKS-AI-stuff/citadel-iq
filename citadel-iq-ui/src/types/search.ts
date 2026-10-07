@@ -1,4 +1,7 @@
-export type SearchScope = 'EntirePortal' | 'CurrentFolder' | 'CurrentFolderAndSubfolders';
+import type { UploaderDto } from './folder';
+
+/** EntireWorkspace = the caller's whole workspace. */
+export type SearchScope = 'EntireWorkspace' | 'CurrentFolder' | 'CurrentFolderAndSubfolders';
 
 export interface SearchRequestDto {
   query: string;
@@ -17,4 +20,5 @@ export interface SearchResultDto {
   pageNumber: number | null;
   sheetName: string | null;
   similarityScore: number;
+  uploadedBy: UploaderDto | null;
 }

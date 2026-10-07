@@ -6,7 +6,7 @@ import { Footer } from './Footer';
 import { FloatingShapes } from './FloatingShapes';
 import { SearchPanel } from '../components/search/SearchPanel';
 import { AssistantInfoPanel } from '../components/common/AssistantInfoPanel';
-import { ROOT_FOLDER_ID } from '../constants';
+import { useActiveWorkspace } from '../session/useSession';
 
 const CONTENT_MAX_WIDTH = 1320;
 const SIDEBAR_WIDTH = 300;
@@ -15,6 +15,7 @@ export function AppShell() {
   const { folderId } = useParams<{ folderId?: string }>();
   const navigate = useNavigate();
   const [isSearchOpen, setSearchOpen] = useState(false);
+  const { workspace } = useActiveWorkspace();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -92,7 +93,7 @@ export function AppShell() {
       <SearchPanel
         open={isSearchOpen}
         onClose={() => setSearchOpen(false)}
-        currentFolderId={folderId ?? ROOT_FOLDER_ID}
+        currentFolderId={folderId ?? workspace.rootFolderId}
       />
     </Box>
   );

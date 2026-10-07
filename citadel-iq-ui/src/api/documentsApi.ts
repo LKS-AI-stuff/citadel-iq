@@ -1,4 +1,4 @@
-import { API_BASE_URL, apiClient } from './apiClient';
+import { API_BASE_URL, CSRF_HEADERS, apiClient, reportAuthFailure } from './apiClient';
 import type { DocumentSummaryDto } from '../types/folder';
 
 export interface UploadHandle {
@@ -15,6 +15,9 @@ function uploadDocument(folderId: string, file: File, onProgress: (percent: numb
     formData.append('file', file);
 
     xhr.open('POST', `${API_BASE_URL}/api/documents/upload`);
+    for (const [name, value] of Object.entries(CSRF_HEADERS)) {
+      xhr.setRequestHeader(name, value);
+    }
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
@@ -29,6 +32,7 @@ function uploadDocument(folderId: string, file: File, onProgress: (percent: numb
       }
 
       const problem = safeParseJson(xhr.responseText);
+      reportAuthFailure(xhr.status, problem?.title);
       reject(new Error(problem?.title ?? 'Upload failed. Please try again.'));
     };
 
