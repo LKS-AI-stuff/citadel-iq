@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using CitadelIQ.Application.Organizations;
 using CitadelIQ.Tests.Support;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace CitadelIQ.Tests.Integration;
 
@@ -44,6 +45,34 @@ public class AuthApiTests(PostgresFixture postgres)
         Assert.Equal("Please sign in.", await TitleAsync(me));
         Assert.Equal(HttpStatusCode.Unauthorized, root.StatusCode);
         Assert.Equal("application/problem+json", root.Content.Headers.ContentType!.MediaType);
+    }
+
+    [Fact]
+    public async Task Cookie_encryption_keys_are_persisted_to_the_configured_path_and_survive_a_restart()
+    {
+        await using var app = await postgres.CreateAppAsync();
+        var keysPath = Path.Combine(Path.GetTempPath(), "citadeliq-tests", $"keys-{Guid.NewGuid():N}");
+        var settings = new Dictionary<string, string> { ["DataProtection__KeysPath"] = keysPath };
+        try
+        {
+            string protectedValue;
+            using (var first = ApiFactory.Create(app, settings))
+            {
+                var protector = first.Services.GetRequiredService<IDataProtectionProvider>().CreateProtector("test");
+                protectedValue = protector.Protect("session");
+            }
+
+            Assert.NotEmpty(Directory.GetFiles(keysPath, "key-*.xml"));
+
+            // A new host (a restarted container) with the same key ring can still read what the old one wrote.
+            using var second = ApiFactory.Create(app, settings);
+            var reader = second.Services.GetRequiredService<IDataProtectionProvider>().CreateProtector("test");
+            Assert.Equal("session", reader.Unprotect(protectedValue));
+        }
+        finally
+        {
+            if (Directory.Exists(keysPath)) Directory.Delete(keysPath, recursive: true);
+        }
     }
 
     [Fact]

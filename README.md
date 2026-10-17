@@ -197,7 +197,9 @@ dotnet user-secrets set "Authentication:Oidc:ClientId" "<application (client) id
 dotnet user-secrets set "Authentication:Oidc:ClientSecret" "<client secret>"
 ```
 
-The session is an HttpOnly cookie (`__Host-citadeliq`, Secure). Chrome and Firefox accept Secure cookies on
+The session is an HttpOnly cookie (`__Host-citadeliq`, Secure), encrypted with ASP.NET data-protection keys — locally in
+`~/.aspnet/DataProtection-Keys`, in Docker on the `dpkeys` volume (`DataProtection:KeysPath`), so restarts don't sign
+users out. Chrome and Firefox accept Secure cookies on
 `http://localhost`; Safari does not — use Chrome/Firefox locally, or run the API with `--launch-profile https` and
 `API_PROXY_TARGET=https://localhost:7274 npm run dev`.
 

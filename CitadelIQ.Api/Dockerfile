@@ -20,7 +20,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 COPY --from=build /app ./
 # Raw uploaded files (Storage:DocumentsPath, relative to the content root) — mount a volume here.
-RUN mkdir -p /app/App_Data/documents
+RUN mkdir -p /app/App_Data/documents /app/App_Data/keys
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "CitadelIQ.Api.dll"]

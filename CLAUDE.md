@@ -365,7 +365,7 @@ published). Copy `.env.example` to `.env` (`POSTGRES_PASSWORD`, `APP_DB_PASSWORD
 creates `citadeliq_app` on first volume initialization (on an existing volume create it by hand). The API receives
 both connection strings, `OpenAI__ApiKey`, `Authentication__Oidc__*`, `ForwardedHeaders__KnownProxies__0` (nginx's
 fixed IP) and `Database__MigrateOnStartup=true` as environment variables; Postgres data and
-uploaded files persist in the `pgdata` and `documents` volumes (back up both together; with `Storage:Provider=AzureBlob` the files live in the blob container instead — back up the DB and enable soft delete/versioning on the container). Postgres is not published to the host. Expose the UI only over HTTPS (Secure session cookie; Entra requires https
+uploaded files persist in the `pgdata` and `documents` volumes and the session-cookie keys in `dpkeys` (back up the first two together; with `Storage:Provider=AzureBlob` the files live in the blob container instead — back up the DB and enable soft delete/versioning on the container). Postgres is not published to the host. Expose the UI only over HTTPS (Secure session cookie; Entra requires https
 redirect URIs except for localhost).
 These Docker files have not yet been built/run end-to-end.
 
@@ -398,6 +398,7 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 | `Authentication` | `Mode` | `Oidc` (`DevelopmentLogin` in `appsettings.Development.json`) | `DevelopmentLogin` is refused outside Development |
 | `Authentication:Oidc` | `Authority`, `ClientId`, `ClientSecret`, `Scopes` | `""`, `""`, *(secret)*, `openid profile email` | `ClientSecret` via user-secrets / `Authentication__Oidc__ClientSecret` only |
 | `Authentication:Session` | `CookieName`, `IdleTimeoutHours`, `AbsoluteLifetimeDays` | `__Host-citadeliq`, `8`, `7` | HttpOnly, Secure, SameSite=Lax session cookie |
+| `DataProtection` | `KeysPath` | `""` (ASP.NET per-user default) | Where the cookie-encryption key ring is persisted; Docker uses `/app/App_Data/keys` on the `dpkeys` volume. Losing it signs everyone out |
 | `Authentication:JoinRateLimit` | `PermitLimit` / `WindowMinutes` | `10` / `60` | Join-code attempts per user |
 | `OpenAI` | `EmbeddingModel` | `text-embedding-3-small` | Embedding model name |
 | `ConnectionStrings` | `CitadelIQ` | *(empty — user-secrets / env var only)* | Runtime role (`citadeliq_app`); the app refuses to start if it's empty or bypasses RLS |

@@ -54,8 +54,11 @@ services:
       Storage__AzureBlob__ConnectionString: ${AZURE_STORAGE_CONNECTION_STRING:-}
       Search__MinSimilarity: ${SEARCH_MIN_SIMILARITY:-0.25}
       Database__MigrateOnStartup: "true"
+      # Session-cookie encryption keys on a volume, so restarts/rebuilds don't sign everyone out.
+      DataProtection__KeysPath: /app/App_Data/keys
     volumes:
       - documents:/app/App_Data/documents
+      - dpkeys:/app/App_Data/keys
     # No published port: the browser reaches the API only through nginx (same origin).
     networks:
       default:
@@ -83,3 +86,4 @@ networks:
 volumes:
   pgdata:
   documents:
+  dpkeys:

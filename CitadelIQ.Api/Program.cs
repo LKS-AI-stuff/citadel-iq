@@ -29,6 +29,7 @@ builder.Services.AddOptions<StorageOptions>().Bind(builder.Configuration.GetSect
 builder.Services.AddOptions<RagOptions>().Bind(builder.Configuration.GetSection("Rag")).ValidateOnStart();
 builder.Services.AddOptions<AppAuthenticationOptions>().Bind(builder.Configuration.GetSection("Authentication")).ValidateOnStart();
 
+builder.AddCitadelDataProtection();
 builder.AddCitadelAuthentication();
 var joinRateLimit = builder.Configuration.GetSection("Authentication:JoinRateLimit").Get<JoinRateLimitOptions>() ?? new JoinRateLimitOptions();
 
