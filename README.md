@@ -182,20 +182,8 @@ The API starts on `http://localhost:5157`.
 
 **Sign-in.** In Development the API defaults to `Authentication:Mode = DevelopmentLogin`: a local form where any email
 signs in (the same email is the same account), so you can work without an identity provider. It is refused outside
-the Development environment. To use **Microsoft Entra External ID** instead:
-
-1. In the Azure portal, create an *external* tenant, then a *Sign up and sign in* user flow (email + password, collect
-   *Display name*; email is verified with a one-time code).
-2. Register an app (platform **Web**). Redirect URI `http://localhost:5173/signin-oidc`, front-channel logout / post-logout
-   redirect `http://localhost:5173/signout-callback-oidc`. Add `email` as an optional ID-token claim. Create a client secret.
-3. Link the app to the user flow, then:
-
-```bash
-dotnet user-secrets set "Authentication:Mode" "Oidc"
-dotnet user-secrets set "Authentication:Oidc:Authority" "https://<tenant-subdomain>.ciamlogin.com/<tenant-id>/v2.0"
-dotnet user-secrets set "Authentication:Oidc:ClientId" "<application (client) id>"
-dotnet user-secrets set "Authentication:Oidc:ClientSecret" "<client secret>"
-```
+the Development environment. To sign in with **Microsoft Entra External ID** instead, follow
+[Sign-in with Microsoft Entra External ID](#-sign-in-with-microsoft-entra-external-id) below.
 
 The session is an HttpOnly cookie (`__Host-citadeliq`, Secure), encrypted with ASP.NET data-protection keys — locally in
 `~/.aspnet/DataProtection-Keys`, in Docker on the `dpkeys` volume (`DataProtection:KeysPath`), so restarts don't sign
@@ -337,6 +325,132 @@ session; the conversation is kept in the browser only. Configure via `OpenAI:Cha
 (limits, kill switch `Rag:Enabled`, per-IP rate limits) — see `CLAUDE.md` for the table. **Privacy:** the question,
 recent turns and the most relevant passages are sent to OpenAI; nothing is stored server-side and questions/answers
 are never logged. Set a monthly spend limit in the OpenAI dashboard.
+
+## 🔑 Sign-in with Microsoft Entra External ID
+
+Locally the development login is enough. Use Entra to test the real sign-up/sign-in flow, and for every deployment.
+Email, passwords, verification codes and password reset all live in Entra; CitadelIQ stores only the user's issuer,
+subject id, display name and email. Set up the database first (Quick start step 1) and check the app with the
+development login before switching.
+
+> The Azure portal moves its menus around from time to time. Each step names what to look for, so you can find it
+> under a different label if needed.
+
+### 1. Create the external tenant
+
+1. Go to [entra.microsoft.com](https://entra.microsoft.com) → **Entra ID → Overview → Manage tenants → Create** and choose
+   **External** (not Workforce).
+2. Fill in:
+   - **Tenant name:** e.g. `CitadelIQ`.
+   - **Domain name:** e.g. `citadeliq`. The portal shows the directory domain `citadeliq.onmicrosoft.com`; sign-in
+     happens on `citadeliq.ciamlogin.com`. The prefix (`citadeliq`) is your `<subdomain>` below.
+   - **Location:** your region.
+   - **Subscription / resource group:** any. The resource group only holds the tenant's billing resource, not your
+     users. Deleting that group can delete the tenant and all its users, so use a separate group (e.g.
+     `rg-citadeliq-identity`) if you might tear down a shared one.
+3. Create it (takes a few minutes), then switch to it: **Settings → Directories + subscriptions**.
+4. On **Overview**, copy the **Tenant ID** (a GUID). This is `<tenant-id>`.
+
+### 2. Register the app
+
+In the external tenant:
+
+1. **App registrations → New registration**:
+   - **Name:** `CitadelIQ (local)`.
+   - **Supported account types:** **Single tenant only – CitadelIQ** (accounts in this directory only). Everyone who
+     signs up through the user flow becomes an account in this tenant. The multi-tenant and personal-account options
+     would let outside accounts skip your sign-up flow.
+   - **Redirect URI:** platform **Web**, `http://localhost:5173/signin-oidc`.
+2. Copy the **Application (client) ID** from the app's **Overview**.
+3. **Authentication:**
+   - Add a second Web redirect URI, `http://localhost:5173/signout-callback-oidc`, for returning after sign-out.
+   - Leave both **Implicit grant and hybrid flows** boxes unchecked. The app uses the authorization-code flow with PKCE.
+4. **Certificates & secrets → New client secret.** Copy the **Value** (not the Secret ID); it's shown only once. Note
+   the expiry date: sign-in stops working when the secret expires.
+5. **API permissions:** Microsoft Graph *delegated* `openid`, `profile` and `email` should be listed (add any that are
+   missing), then click **Grant admin consent**.
+6. **Token configuration → Add optional claim → ID → email**. Accept if it asks to turn on the Graph email permission.
+
+### 3. Create the sign-up / sign-in user flow
+
+1. **External Identities → User flows → New user flow**:
+   - **Name:** `SignUpSignIn`.
+   - **Identity providers:** **Email with password**. New users confirm their email with a one-time code.
+   - **User attributes:** tick **Display Name**. The app shows it and uses it to name individual workspaces.
+2. Open the flow → **Applications → Add application** → select `CitadelIQ (local)`. **Without this link the sign-in
+   page has no "No account? Create one" option.**
+3. Optional: **Company branding** (logo, colours). Self-service password reset is on by default for email + password.
+
+### 4. Check the sign-in address
+
+Open this in a browser:
+
+```
+https://<subdomain>.ciamlogin.com/<tenant-id>/v2.0/.well-known/openid-configuration
+```
+
+If it returns JSON with an `issuer`, the same URL without `/.well-known/openid-configuration` is your **Authority**.
+If it doesn't, copy the OpenID Connect metadata URL from the app registration's **Overview → Endpoints** and drop that
+same suffix. Don't use `login.microsoftonline.com`: that host is for workforce tenants and won't run your sign-up flow.
+
+### 5. Point the app at Entra
+
+```bash
+cd CitadelIQ.Api
+dotnet user-secrets set "Authentication:Mode" "Oidc"
+dotnet user-secrets set "Authentication:Oidc:Authority" "https://<subdomain>.ciamlogin.com/<tenant-id>/v2.0"
+dotnet user-secrets set "Authentication:Oidc:ClientId" "<application (client) id>"
+dotnet user-secrets set "Authentication:Oidc:ClientSecret" "<client secret value>"
+```
+
+User-secrets override `appsettings.Development.json`, which defaults to `DevelopmentLogin`. To switch back to the
+development form: `dotnet user-secrets set "Authentication:Mode" "DevelopmentLogin"`.
+
+Restart `dotnet run`, then in Chrome or Firefox:
+
+1. Open `http://localhost:5173` → **Sign in or create an account**. You should be sent to `…ciamlogin.com`.
+2. Choose **No account? Create one**, then enter your email, the code you receive, a password and a display name.
+3. You return to CitadelIQ's onboarding page, which should say *Welcome, &lt;your display name&gt;*.
+4. **Sign out** from the account menu goes through Entra's sign-out and back to the sign-in page.
+
+**Development-login accounts don't carry over.** They're stored with the issuer `urn:citadeliq:dev`, so signing in
+with the same email through Entra creates a new user who starts at onboarding; nothing is merged. The old users,
+organizations and documents stay in the database but can't sign in until you switch back to `DevelopmentLogin`. To
+start clean, wipe the rows and files (see *Resetting local data*) and sign out in the browser.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| **AADSTS50011** (redirect URI mismatch) | The URI differs from the registered one | Use exactly `http://localhost:5173/signin-oidc`: `localhost`, not `127.0.0.1`, and port 5173, not 5157 |
+| Sign-out error about the post-logout redirect | `signout-callback-oidc` isn't registered | Step 2.3 |
+| No **No account? Create one** link | The user flow isn't linked to this app, the client id belongs to another app, or the flow has no sign-up method | Step 3.2; compare `ClientId` with the app's Overview; check the address bar is `<subdomain>.ciamlogin.com`. Preview the flow with **Run user flow**: if the preview also lacks the link, tick **Email with password** under the flow's **Identity providers** |
+| Display name shows the email | No `name` claim | Collect **Display Name** in the user flow, then sign out and in (the name is refreshed at every sign-in) |
+| Email empty in the admin member list | No `email` claim | Step 2.6 |
+| Back on the sign-in page, or "Correlation failed" | The browser dropped the Secure cookie | Use Chrome/Firefox on `http://localhost:5173`. For Safari run the API with `--launch-profile https` and the UI with `API_PROXY_TARGET=https://localhost:7274 npm run dev` |
+| Lands on `/?signin=failed` | Entra returned an error | Check the API log; usually a wrong client secret or Authority |
+| API won't start: "Authentication:Oidc:… is required" | A setting is missing | `dotnet user-secrets list` and set it |
+
+### Deploying with Docker Compose
+
+1. **HTTPS and a domain**, e.g. `https://docs.example.com`. If TLS is terminated in front of nginx (Caddy, Traefik, a
+   cloud load balancer), it must send `X-Forwarded-Proto: https`; otherwise the API builds `http://` redirect URIs,
+   which Entra rejects.
+2. **Redirect URIs:** in the app registration (or, cleaner, a separate `CitadelIQ (production)` registration linked to
+   the same user flow) add the Web redirect URIs `https://docs.example.com/signin-oidc` and
+   `https://docs.example.com/signout-callback-oidc`.
+3. **A separate client secret** for production.
+4. **Settings:** `cp .env.example .env` and fill in `POSTGRES_PASSWORD`, `APP_DB_PASSWORD`, `OPENAI_API_KEY`,
+   `OIDC_AUTHORITY` (`https://<subdomain>.ciamlogin.com/<tenant-id>/v2.0`), `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`.
+5. **Start:** `docker compose up -d --build`. This creates the `pgdata`, `documents` and `dpkeys` volumes. On a new
+   `pgdata` volume the init script creates `citadeliq_app`; on an existing one create the role by hand (Quick start
+   step 1) or recreate the volume, since the initial migration was rewritten.
+6. **Backups:** back up `pgdata` and `documents` together. `dpkeys` holds the session-cookie keys; losing it only
+   signs everyone out. Don't run `docker compose down -v` unless you mean to delete the volumes.
+7. If the default network `172.28.0.0/16` clashes with yours, set `COMPOSE_SUBNET` and `UI_PROXY_IP` in `.env`.
+
+The container runs in Production, where the development login is refused, so sign-in always goes through Entra.
+These Docker files haven't been built and run end to end yet.
 
 ## ☁️ Optional: Azure Blob Storage for files
 
