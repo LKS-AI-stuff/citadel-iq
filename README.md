@@ -165,6 +165,8 @@ TRUNCATE "DocumentChunks", "Documents", "Folders", "JoinRequests", "Memberships"
 rm -rf CitadelIQ.Api/App_Data/documents/*
 ```
 
+To wipe everything, including Entra users, blob files and secrets, see [deploy/cleanup.md](./deploy/cleanup.md).
+
 ### 2. Backend setup
 
 ```bash
@@ -222,7 +224,11 @@ The UI opens at `http://localhost:5173`. The dev server proxies `/api`, `/auth` 
 
 | Section | Key | Default | Notes |
 |---|---|---|---|
-| `ConnectionStrings` | `CitadelIQ` | — (empty) | **User-secrets / env var only** — PostgreSQL connection string |
+| `ConnectionStrings` | `CitadelIQ` | — (empty) | **User-secrets / env var only** — runtime login (`citadeliq_app`); refused if superuser/BYPASSRLS |
+| `ConnectionStrings` | `CitadelIQMigrations` | — (empty) | **User-secrets / env var only** — owner login used to run migrations |
+| `Authentication` | `Mode` | `Oidc` (`DevelopmentLogin` in Development) | The development login is refused outside Development |
+| `Authentication:Oidc` | `Authority` / `ClientId` / `ClientSecret` | — | Entra External ID app; `ClientSecret` **user-secrets / env var only** |
+| `DataProtection` | `KeysPath` | — (ASP.NET default) | Where session-cookie keys are kept; Docker uses the `dpkeys` volume |
 | `OpenAI` | `EmbeddingModel` | `text-embedding-3-small` | Set via user-secrets |
 | `OpenAI` | `EmbeddingDimension` | `1536` | Must match the model; the migration hardcodes `vector(1536)` |
 | `OpenAI` | `ApiKey` | — | **User-secrets only**, never in `appsettings.json` |
@@ -322,7 +328,7 @@ designed for, but intentionally not built in this version).
 The search drawer's **Ask** mode streams a short answer written only from your documents, with numbered citations
 that link to the exact passages (each source card can download the original file). Follow-up questions work within a
 session; the conversation is kept in the browser only. Configure via `OpenAI:ChatModel` and the `Rag` section
-(limits, kill switch `Rag:Enabled`, per-IP rate limits) — see `CLAUDE.md` for the table. **Privacy:** the question,
+(limits, kill switch `Rag:Enabled`, per-user rate limits) — see `CLAUDE.md` for the table. **Privacy:** the question,
 recent turns and the most relevant passages are sent to OpenAI; nothing is stored server-side and questions/answers
 are never logged. Set a monthly spend limit in the OpenAI dashboard.
 
@@ -433,24 +439,9 @@ start clean, wipe the rows and files (see *Resetting local data*) and sign out i
 
 ### Deploying with Docker Compose
 
-1. **HTTPS and a domain**, e.g. `https://docs.example.com`. If TLS is terminated in front of nginx (Caddy, Traefik, a
-   cloud load balancer), it must send `X-Forwarded-Proto: https`; otherwise the API builds `http://` redirect URIs,
-   which Entra rejects.
-2. **Redirect URIs:** in the app registration (or, cleaner, a separate `CitadelIQ (production)` registration linked to
-   the same user flow) add the Web redirect URIs `https://docs.example.com/signin-oidc` and
-   `https://docs.example.com/signout-callback-oidc`.
-3. **A separate client secret** for production.
-4. **Settings:** `cp .env.example .env` and fill in `POSTGRES_PASSWORD`, `APP_DB_PASSWORD`, `OPENAI_API_KEY`,
-   `OIDC_AUTHORITY` (`https://<subdomain>.ciamlogin.com/<tenant-id>/v2.0`), `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`.
-5. **Start:** `docker compose up -d --build`. This creates the `pgdata`, `documents` and `dpkeys` volumes. On a new
-   `pgdata` volume the init script creates `citadeliq_app`; on an existing one create the role by hand (Quick start
-   step 1) or recreate the volume, since the initial migration was rewritten.
-6. **Backups:** back up `pgdata` and `documents` together. `dpkeys` holds the session-cookie keys; losing it only
-   signs everyone out. Don't run `docker compose down -v` unless you mean to delete the volumes.
-7. If the default network `172.28.0.0/16` clashes with yours, set `COMPOSE_SUBNET` and `UI_PROXY_IP` in `.env`.
-
-The container runs in Production, where the development login is refused, so sign-in always goes through Entra.
-These Docker files haven't been built and run end to end yet.
+See **[deploy/docker-deployment.md](./deploy/docker-deployment.md)**. It covers HTTPS and forwarded headers,
+production redirect URIs and secret, `.env`, the `citadeliq_app` role on new and existing volumes, volumes and
+backups, network settings and troubleshooting.
 
 ## ☁️ Optional: Azure Blob Storage for files
 

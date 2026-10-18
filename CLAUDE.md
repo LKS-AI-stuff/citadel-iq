@@ -183,7 +183,7 @@ validates `[n]` citations). Everything that can fail with an HTTP status happens
 byte (ProblemDetails via the middleware: 400/404/502/503); later failures are an `error` event. The Application layer
 yields `AnswerEvent`s; only `AnswersController` + `Streaming/SseWriter` know about HTTP/SSE. The conversation lives in
 the browser (`useAsk`) and is sent as `history` each request; the server is stateless and never logs questions,
-chunks, prompts or answers. Answers are rendered as plain text (no Markdown). `/api/answers` is rate-limited per IP
+chunks, prompts or answers. Answers are rendered as plain text (no Markdown). `/api/answers` is rate-limited per user (per IP when anonymous)
 (sliding window + concurrent-stream cap, `Rag:RateLimit`); `GET /api/settings` exposes only client-safe limits.
 `Rag:Temperature` / `Rag:MaxOutputTokens` are sent to the model only when set. **Phase 0 (real-model compatibility
 spike for `OpenAI:ChatModel`) and Phase 6 manual QA have not been run** — see rag.md §16.
@@ -367,6 +367,7 @@ both connection strings, `OpenAI__ApiKey`, `Authentication__Oidc__*`, `Forwarded
 fixed IP) and `Database__MigrateOnStartup=true` as environment variables; Postgres data and
 uploaded files persist in the `pgdata` and `documents` volumes and the session-cookie keys in `dpkeys` (back up the first two together; with `Storage:Provider=AzureBlob` the files live in the blob container instead — back up the DB and enable soft delete/versioning on the container). Postgres is not published to the host. Expose the UI only over HTTPS (Secure session cookie; Entra requires https
 redirect URIs except for localhost).
+Step-by-step deployment guide: [deploy/docker-deployment.md](./deploy/docker-deployment.md).
 These Docker files have not yet been built/run end-to-end.
 
 ### Frontend
@@ -413,7 +414,7 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 | `Rag` | `Enabled`, `MaxContextChunks`/`Cap`, `MaxContextChars`, `MinSimilarity` | `true`, `8`/`12`, `8000`, `0.30` | Kill switch (503), context size, answer similarity floor (untuned) |
 | `Rag` | `MaxQuestionLength`, `MaxHistoryTurns`, `MaxHistoryChars`, `RewriteAnswerExcerptChars` | `1000`, `10`, `12000`, `500` | Hard input limits (server rejects, never truncates) |
 | `Rag` | `MaxOutputTokens`, `Temperature` | unset | Sent to the model only when set |
-| `Rag:RateLimit` | `PermitLimit`/`WindowSeconds`/`MaxConcurrentStreams` | `20`/`60`/`2` | Per-IP limits on `/api/answers` |
+| `Rag:RateLimit` | `PermitLimit`/`WindowSeconds`/`MaxConcurrentStreams` | `20`/`60`/`2` | Per-user limits on `/api/answers` |
 | `Storage` | `Provider` | `LocalDisk` | `LocalDisk` or `AzureBlob`; unknown values fail at startup |
 | `Storage:AzureBlob` | `AccountName`, `ContainerName`, `ServiceUri`, `CreateContainerIfMissing` | `""`, `documents`, unset, `false` | Account/container are config. `ConnectionString` is a **secret** (user-secrets / `Storage__AzureBlob__ConnectionString`), takes precedence over Entra ID |
 | `Storage` | `DocumentsPath` | `App_Data/documents` | Relative to `IHostEnvironment.ContentRootPath` — resolved once at host startup, not `Directory.GetCurrentDirectory()` (which depends on how the process was launched) |
