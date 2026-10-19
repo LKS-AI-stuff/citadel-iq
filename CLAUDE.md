@@ -367,7 +367,7 @@ both connection strings, `OpenAI__ApiKey`, `Authentication__Oidc__*`, `Forwarded
 fixed IP) and `Database__MigrateOnStartup=true` as environment variables; Postgres data and
 uploaded files persist in the `pgdata` and `documents` volumes and the session-cookie keys in `dpkeys` (back up the first two together; with `Storage:Provider=AzureBlob` the files live in the blob container instead — back up the DB and enable soft delete/versioning on the container). Postgres is not published to the host. Expose the UI only over HTTPS (Secure session cookie; Entra requires https
 redirect URIs except for localhost).
-Step-by-step deployment guide: [deploy/docker-deployment.md](./deploy/docker-deployment.md).
+Step-by-step deployment guide: [.claude/docs/docker-deployment.md](./.claude/docs/docker-deployment.md).
 These Docker files have not yet been built/run end-to-end.
 
 ### Frontend

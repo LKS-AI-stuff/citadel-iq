@@ -165,7 +165,7 @@ TRUNCATE "DocumentChunks", "Documents", "Folders", "JoinRequests", "Memberships"
 rm -rf CitadelIQ.Api/App_Data/documents/*
 ```
 
-To wipe everything, including Entra users, blob files and secrets, see [deploy/cleanup.md](./deploy/cleanup.md).
+To wipe everything, including Entra users, blob files and secrets, see [.claude/docs/cleanup.md](./.claude/docs/cleanup.md).
 
 ### 2. Backend setup
 
@@ -439,7 +439,7 @@ start clean, wipe the rows and files (see *Resetting local data*) and sign out i
 
 ### Deploying with Docker Compose
 
-See **[deploy/docker-deployment.md](./deploy/docker-deployment.md)**. It covers HTTPS and forwarded headers,
+See **[.claude/docs/docker-deployment.md](./.claude/docs/docker-deployment.md)**. It covers HTTPS and forwarded headers,
 production redirect URIs and secret, `.env`, the `citadeliq_app` role on new and existing volumes, volumes and
 backups, network settings and troubleshooting.
 
