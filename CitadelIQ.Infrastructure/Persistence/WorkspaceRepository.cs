@@ -18,6 +18,9 @@ public class WorkspaceRepository(CitadelIQDbContext db) : IWorkspaceRepository
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Guid>> ListIdsAsync(CancellationToken cancellationToken = default) =>
+        await db.Workspaces.AsNoTracking().OrderBy(w => w.Id).Select(w => w.Id).ToListAsync(cancellationToken);
+
     public async Task UpdateAsync(Workspace workspace, CancellationToken cancellationToken = default)
     {
         // Tracked ⇒ only changed columns are written (see UserAccountRepository.UpdateAsync).

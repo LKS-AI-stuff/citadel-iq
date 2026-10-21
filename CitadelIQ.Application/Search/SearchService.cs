@@ -58,6 +58,7 @@ public class SearchService(
 
             results.Add(new SearchResultDto(
                 match.DocumentId,
+                match.FolderId,
                 match.FileName,
                 folderPathDisplay,
                 match.ContentType,

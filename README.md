@@ -237,6 +237,10 @@ The UI opens at `http://localhost:5173`. The dev server proxies `/api`, `/auth` 
 | `Search` | `DefaultTopK` / `MaxTopK` | `10` / `50` | Result count |
 | `Search` | `MinSimilarity` | `0.25` | Minimum cosine similarity for a result (0 disables); override via user-secrets |
 | `Storage` | `DocumentsPath` | `App_Data/documents` | Raw file storage location |
+| `EmailAgent` | `Mode` / `SupportAddress` / `PortalBaseUrl` | `Off` / — / — | Email questions agent (kill switch `Off`/`DraftsOnly`/`On`) |
+| `EmailAgent` | `ConfidenceThreshold` / `MinCitedSimilarity` | `0.8` / `0.45` | Auto-reply gates (untuned) |
+| `EmailAgent:Limits` | `PerUserPerHour` / `PerOrganizationPerDay` / `TotalPerDay` / `MaxSentPerDay` | `10` / `200` / `2000` / `1500` | Processing and sending caps |
+| `EmailAgent:Mailbox` | `Host` / `SmtpHost` / `Username` / `Password` / `TrustedAuthServId` | — | Empty `Host` ⇒ the agent isn't wired; `Password` **user-secrets / env var only** |
 
 See [CLAUDE.md](./CLAUDE.md) for the full configuration reference and architectural details.
 
@@ -297,7 +301,13 @@ npm run preview  # Preview the production build
 | `GET` | `/api/documents/{id}/download` | Download the original file |
 | `DELETE` | `/api/documents/{id}` | Delete a document (removes stored file, chunks, and embeddings) |
 | `POST` | `/api/search` | Semantic search |
+| `POST` | `/api/answers/stream` | Ask: a streamed, cited answer (SSE) |
+| `GET` | `/api/email/status` | The support address and whether your address can be used |
+| `GET` | `/api/email/activity` | Emailed questions and their outcomes (Members: their own) |
+| `GET`/`POST` | `/api/email/drafts…` | Review queue: list, count, read, send, dismiss (Admin/Owner, organizations) |
+| `GET`/`PUT` | `/api/email/notification-preference` | Draft-notification emails on/off (Admin/Owner) |
 | `GET` | `/health` | Health check |
+| `GET` | `/health/email` | Email agent mode and last mailbox poll (503 when failing) |
 
 ## 🏗️ Architecture
 
@@ -331,6 +341,72 @@ session; the conversation is kept in the browser only. Configure via `OpenAI:Cha
 (limits, kill switch `Rag:Enabled`, per-user rate limits) — see `CLAUDE.md` for the table. **Privacy:** the question,
 recent turns and the most relevant passages are sent to OpenAI; nothing is stored server-side and questions/answers
 are never logged. Set a monthly spend limit in the OpenAI dashboard.
+
+## 📧 Email questions (support mailbox)
+
+Signed-in users can also email a question to one shared support address. CitadelIQ matches the sender to a
+registered, active account (case-insensitive, on the verified `email` claim; ambiguous or unknown senders are
+ignored), checks the provider's SPF/DKIM result for the From domain, and answers only from that user's workspace:
+
+- **Confident** (valid citations, a strong cited source, and a "fully answered" judge score) → an automatic reply in
+  the same thread, listing the cited documents with links to their folder in the portal (never attachments or
+  download links).
+- **Otherwise, in an organization** → a draft in the portal's review queue (**Email review** in the account menu) for
+  Owners/Admins to edit and send or dismiss; the sender gets a short holding reply, and admins get a batched
+  notification email (opt-out per admin) without the question or answer.
+- **Otherwise, in an individual workspace** → a "no confident answer" reply, with any suggestion clearly labelled
+  as unverified.
+
+Unknown, closed, pending or unauthenticated senders get no reply and appear only in the operator log (the
+`InboundEmails` table: time, mailbox ids, reason and sender **domain** only). Out-of-office replies, bounces, mailing
+lists and "thanks" messages are ignored. Email content is processed by OpenAI, like Ask.
+
+The agent is **off by default** (`EmailAgent:Mode`). Its state lives in PostgreSQL (processing rows keyed by IMAP
+UIDVALIDITY + UID, an outbox with pre-generated Message-IDs), so a restart never loses an email or sends a duplicate.
+
+> **Not yet verified against a real mailbox.** The design's Phase 0 spike (real Gmail headers, IDLE behaviour, Sent
+> folder, HTML-only mail, JSON reliability of the chat model) hasn't been run. Do it before relying on the agent, and
+> start in `DraftsOnly`: drafts record whether they *would* have been auto-sent (`WouldAutoReply`), so the thresholds
+> can be checked against real traffic.
+
+### Test mailbox (Gmail)
+
+Use a **dedicated, new** Gmail account — never a real mailbox: the agent archives everything in its inbox and later
+deletes the archive.
+
+1. Turn on 2-Step Verification, then create an **app password** (Google Account → Security → App passwords).
+2. In Gmail settings, check IMAP access is available and create a label `CitadelIQ/Processed` (the agent creates it
+   if missing).
+3. Configure the API (the password via user-secrets only):
+
+```bash
+cd CitadelIQ.Api
+dotnet user-secrets set "EmailAgent:Mode" "DraftsOnly"          # then "On" once drafts look right
+dotnet user-secrets set "EmailAgent:SupportAddress" "<the test address>@gmail.com"
+dotnet user-secrets set "EmailAgent:PortalBaseUrl" "http://localhost:5173"
+dotnet user-secrets set "EmailAgent:Mailbox:Host" "imap.gmail.com"
+dotnet user-secrets set "EmailAgent:Mailbox:SmtpHost" "smtp.gmail.com"
+dotnet user-secrets set "EmailAgent:Mailbox:Username" "<the test address>@gmail.com"
+dotnet user-secrets set "EmailAgent:Mailbox:Password" "<app password>"
+dotnet user-secrets set "EmailAgent:Mailbox:TrustedAuthServId" "mx.google.com"
+```
+
+4. Sign in to the portal with the development login using a **different** address you control (development-login
+   addresses are trusted only in Development, `EmailAgent:AllowDevelopmentIdentities`), upload a document, and email
+   a question from that address to the test mailbox.
+
+`GET /health/email` reports the mode, whether this instance runs the agent, and the last successful mailbox poll (503
+when the agent is on without a configured mailbox, or when the running instance hasn't polled successfully for
+`EmailAgent:HealthFailureMinutes`). With `Mode` on but no mailbox host, nothing runs and the portal doesn't show the
+support address; the API logs a warning at startup. Consumer Gmail sends ~500 messages a day: testing only.
+
+### Production mailbox
+
+A mailbox on CitadelIQ's own domain (the host — Google Workspace or Microsoft 365 — is still to be decided; Microsoft
+365 requires `EmailAgent:Mailbox:AuthMode=OAuth2`, whose token source is not implemented yet). Publish **SPF**, **DKIM**
+and **DMARC** for the domain so replies are delivered, set `TrustedAuthServId` to the host's receiving server, the
+folder names, and `AppendToSent=true` if the host doesn't save SMTP-sent mail itself. The shared mailbox holds every
+organization's incoming questions: restrict who can open it to the operators who set it up, and record who they are.
 
 ## 🔑 Sign-in with Microsoft Entra External ID
 
@@ -520,6 +596,10 @@ migrated to the container (and vice versa).
   application (EF Core query filters) and by PostgreSQL row-level security, with the API connected as a role that
   cannot bypass it. Another workspace's ids answer 404.
 - Only Admins and Owners delete or rename; an organization always keeps at least one Owner.
+- Email replies go only to the registered address of the matched account (re-read when sending), never to
+  Reply-To, CC or addresses in the message. Email text is treated as data; the model can't choose recipients or
+  actions. Questions, answers and drafts live in the sender's workspace under the same row-level security; logs hold
+  ids, outcomes and timings only.
 
 ## 📖 Further reading
 

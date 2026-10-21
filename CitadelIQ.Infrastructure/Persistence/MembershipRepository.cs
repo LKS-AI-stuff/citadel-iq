@@ -37,6 +37,10 @@ public class MembershipRepository(CitadelIQDbContext db) : IMembershipRepository
         }
     }
 
+    public Task SetEmailDraftNotificationsAsync(Guid userId, bool enabled, CancellationToken cancellationToken = default) =>
+        db.Memberships.Where(m => m.UserId == userId)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.EmailDraftNotifications, enabled), cancellationToken);
+
     public async Task RunLockedAsync(Guid workspaceId, Func<WorkspaceMembershipSet, Task> change, CancellationToken cancellationToken = default)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);

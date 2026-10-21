@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Avatar, Box, Chip, Divider, IconButton, ListItemIcon, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
+import { Avatar, Badge, Box, Chip, Divider, IconButton, ListItemIcon, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
 import AdminPanelSettingsOutlinedIcon from '@mui/icons-material/AdminPanelSettingsOutlined';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import ExitToAppRoundedIcon from '@mui/icons-material/ExitToAppRounded';
+import MarkEmailReadOutlinedIcon from '@mui/icons-material/MarkEmailReadOutlined';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { EmailSupportLine } from '../email/EmailSupportLine';
 import { useToast } from '../common/ToastProvider';
 import { organizationApi } from '../../api/organizationApi';
 import { ApiError } from '../../api/apiClient';
 import { sessionApi } from '../../api/sessionApi';
+import { usePendingDraftCount } from '../../hooks/usePendingDraftCount';
 import { useActiveWorkspace, useSession } from '../../session/useSession';
 
 function initials(name: string) {
@@ -30,6 +33,7 @@ export function AccountMenu() {
   const [isLeaveOpen, setLeaveOpen] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const isOrganization = workspace.kind === 'Organization';
+  const { count: pendingDrafts, refetch: refetchPendingDrafts } = usePendingDraftCount(can.administer);
 
   const leave = async () => {
     setIsLeaving(true);
@@ -56,8 +60,18 @@ export function AccountMenu() {
   return (
     <>
       <Tooltip title="Account">
-        <IconButton onClick={(e) => setAnchor(e.currentTarget)} aria-label="Account menu" aria-haspopup="menu" aria-expanded={anchor !== null}>
-          <Avatar sx={{ width: 32, height: 32, fontSize: 14, fontWeight: 700, bgcolor: 'primary.main' }}>{initials(user.displayName)}</Avatar>
+        <IconButton
+          onClick={(e) => {
+            setAnchor(e.currentTarget);
+            refetchPendingDrafts();
+          }}
+          aria-label={pendingDrafts > 0 ? `Account menu, ${pendingDrafts} email drafts awaiting review` : 'Account menu'}
+          aria-haspopup="menu"
+          aria-expanded={anchor !== null}
+        >
+          <Badge color="warning" variant="dot" invisible={pendingDrafts === 0} overlap="circular">
+            <Avatar sx={{ width: 32, height: 32, fontSize: 14, fontWeight: 700, bgcolor: 'primary.main' }}>{initials(user.displayName)}</Avatar>
+          </Badge>
         </IconButton>
       </Tooltip>
       <Menu anchorEl={anchor} open={anchor !== null} onClose={() => setAnchor(null)} slotProps={{ paper: { sx: { minWidth: 260 } } }}>
@@ -74,8 +88,25 @@ export function AccountMenu() {
             </Typography>
             <Chip size="small" label={isOrganization ? `Organization · ${role}` : 'Personal'} />
           </Box>
+          <Box sx={{ mt: 1.5, maxWidth: 320 }}>
+            <EmailSupportLine dense />
+          </Box>
         </Box>
         <Divider />
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            navigate('/email');
+          }}
+        >
+          <ListItemIcon>
+            <MarkEmailReadOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <Box component="span" sx={{ flex: 1 }}>
+            {can.administer ? 'Email review' : 'My emails'}
+          </Box>
+          {pendingDrafts > 0 && <Chip size="small" color="warning" label={pendingDrafts} sx={{ ml: 1 }} />}
+        </MenuItem>
         {can.administer && (
           <MenuItem
             onClick={() => {

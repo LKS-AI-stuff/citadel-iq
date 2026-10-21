@@ -11,9 +11,11 @@ using CitadelIQ.Application.Search;
 using CitadelIQ.Domain.Enums;
 using CitadelIQ.FluentMigrations;
 using CitadelIQ.Infrastructure;
+using CitadelIQ.Infrastructure.Email.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace CitadelIQ.Tests.Support;
@@ -40,6 +42,11 @@ public sealed class TestApp : IAsyncDisposable
 
     public FakeEmbeddingService Embeddings { get; }
     public FakeChatCompletionService Chat { get; }
+    public FakeMailbox Mailbox { get; } = new();
+    public FakeMailSender MailSender { get; }
+
+    public const string SupportAddress = "ask@citadeliq.test";
+    public const string PortalBaseUrl = "https://portal.test";
 
     /// <summary>The restricted runtime role's connection string (what the API uses).</summary>
     public string AppConnectionString { get; }
@@ -62,6 +69,7 @@ public sealed class TestApp : IAsyncDisposable
         AppConnectionString = appConnectionString;
         AdminConnectionString = adminConnectionString;
         _contentRoot = contentRoot;
+        MailSender = new FakeMailSender(Mailbox);
     }
 
     public static async Task<TestApp> CreateAsync(string adminConnectionString, double minSimilarity = 0.25, int chunkSize = 400, int chunkOverlap = 80, double ragMinSimilarity = 0.30, Action<StorageOptions>? configureStorage = null, string storageProvider = StorageOptions.LocalDiskProvider)
@@ -105,6 +113,13 @@ public sealed class TestApp : IAsyncDisposable
         services.Configure<ChunkingOptions>(o => { o.ChunkSize = chunkSize; o.ChunkOverlap = chunkOverlap; });
         services.Configure<SearchOptions>(o => o.MinSimilarity = minSimilarity);
         services.Configure<RagOptions>(o => o.MinSimilarity = ragMinSimilarity);
+        services.Configure<EmailAgentOptions>(o =>
+        {
+            o.Mode = EmailAgentMode.On;
+            o.SupportAddress = SupportAddress;
+            o.PortalBaseUrl = PortalBaseUrl;
+            o.RetryDelaysSeconds = [0]; // retries are due immediately in tests
+        });
         services.AddApplication();
         services.AddInfrastructure(config);
         services.AddFluentMigrations(adminDb);
@@ -114,10 +129,20 @@ public sealed class TestApp : IAsyncDisposable
         services.AddSingleton<IChatCompletionService>(chat);
         services.AddSingleton<IDocumentProcessingDispatcher, NoOpDispatcher>();
 
+        // The email agent's mailbox and SMTP sender (the hosted loops aren't registered without a mailbox host;
+        // tests drive the pipelines directly).
+        FakeMailbox? mailbox = null;
+        FakeMailSender? sender = null;
+        services.AddSingleton<IEmailAgentMonitor>(new CitadelIQ.Infrastructure.Email.EmailAgentMonitor(mailboxConfigured: true));
+        services.AddSingleton<IMailbox>(_ => mailbox!);
+        services.AddSingleton<IMailSender>(_ => sender!);
+
         var provider = services.BuildServiceProvider();
         provider.ApplyDatabaseMigrations();
 
         var app = new TestApp(provider, embeddings, chat, appDb, adminDb, contentRoot);
+        mailbox = app.Mailbox;
+        sender = app.MailSender;
         app.DefaultUser = await app.CreateUserAsync("Default User");
         var session = await app.OnboardIndividualAsync(app.DefaultUser);
         app.DefaultWorkspaceId = session.Workspace!.Id;
@@ -252,6 +277,35 @@ public sealed class TestApp : IAsyncDisposable
             return r;
         });
         return (run, events);
+    }
+
+    // ---- Email agent ----
+
+    /// <summary>The live options instance: tests change Mode, limits etc. directly.</summary>
+    public EmailAgentOptions EmailOptions => _services.GetRequiredService<IOptionsMonitor<EmailAgentOptions>>().CurrentValue;
+
+    public RagOptions RagOptions => _services.GetRequiredService<IOptions<RagOptions>>().Value;
+
+    public Task<int> SyncMailboxAsync() => _services.GetRequiredService<MailboxSynchronizer>().SyncAsync(CancellationToken.None);
+
+    public Task<bool> ProcessNextEmailAsync() => _services.GetRequiredService<InboundEmailPipeline>().ProcessNextAsync(CancellationToken.None);
+
+    public Task<bool> SendNextEmailAsync() => _services.GetRequiredService<OutboundEmailPipeline>().SendNextAsync(CancellationToken.None);
+
+    public EmailMaintenanceRunner EmailMaintenance => _services.GetRequiredService<EmailMaintenanceRunner>();
+
+    /// <summary>What the hosted loops do, run to completion: register the inbox, process every due email, send
+    /// everything queued.</summary>
+    public async Task RunEmailAgentAsync()
+    {
+        await SyncMailboxAsync();
+        while (await ProcessNextEmailAsync())
+        {
+        }
+
+        while (await SendNextEmailAsync())
+        {
+        }
     }
 
     public string StoredFilePath(Guid workspaceId, Guid documentId, string extension) =>

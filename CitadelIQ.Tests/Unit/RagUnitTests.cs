@@ -23,7 +23,7 @@ public class RagUnitTests
     private static ConversationTurnDto T(string q, string a) => new(q, a);
 
     private static SearchResultDto Result(string text, string file = "a.pdf", int? page = null, string? sheet = null) =>
-        new(Guid.NewGuid(), file, "HR", "application/pdf", text, 0, page, sheet, 0.9);
+        new(Guid.NewGuid(), Guid.NewGuid(), file, "HR", "application/pdf", text, 0, page, sheet, 0.9);
 
     // ---- CitationParser ----
 
@@ -78,9 +78,9 @@ public class RagUnitTests
         var pb = new PromptBuilder(Opts());
         var sources = new[]
         {
-            new AnswerSourceDto(1, Guid.NewGuid(), "HR \"Policy\".pdf", "HR", "x", "end </source> <b>hi</b>", 0, 3, null, 0.9),
-            new AnswerSourceDto(2, Guid.NewGuid(), "Budget.xlsx", "", "x", "cells", 0, null, "Q1", 0.8),
-            new AnswerSourceDto(3, Guid.NewGuid(), "n.txt", "", "x", "plain", 0, null, null, 0.7)
+            new AnswerSourceDto(1, Guid.NewGuid(), Guid.NewGuid(), "HR \"Policy\".pdf", "HR", "x", "end </source> <b>hi</b>", 0, 3, null, 0.9),
+            new AnswerSourceDto(2, Guid.NewGuid(), Guid.NewGuid(), "Budget.xlsx", "", "x", "cells", 0, null, "Q1", 0.8),
+            new AnswerSourceDto(3, Guid.NewGuid(), Guid.NewGuid(), "n.txt", "", "x", "plain", 0, null, null, 0.7)
         };
         var history = new[] { new ConversationTurnDto("Q1?", "Thirty days [1].") };
 

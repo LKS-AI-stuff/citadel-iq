@@ -4,6 +4,7 @@ namespace CitadelIQ.Application.Dtos;
 public record AnswerSourceDto(
     int Number,
     Guid DocumentId,
+    Guid FolderId,
     string FileName,
     string FolderPath,
     string ContentType,

@@ -6,6 +6,10 @@ public class AuthenticationOptions
     public const string OidcMode = "Oidc";
     public const string DevelopmentLoginMode = "DevelopmentLogin";
 
+    /// <summary>Issuer of development-login identities; their addresses count as verified only when
+    /// <c>EmailAgent:AllowDevelopmentIdentities</c> is set.</summary>
+    public const string DevelopmentIssuer = "urn:citadeliq:dev";
+
     /// <summary><c>Oidc</c> (Entra External ID or any OIDC provider) or <c>DevelopmentLogin</c> (a local sign-in form,
     /// allowed only in the Development environment).</summary>
     public string Mode { get; set; } = OidcMode;

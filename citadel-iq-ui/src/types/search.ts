@@ -12,6 +12,7 @@ export interface SearchRequestDto {
 
 export interface SearchResultDto {
   documentId: string;
+  folderId: string;
   fileName: string;
   folderPath: string;
   contentType: string;

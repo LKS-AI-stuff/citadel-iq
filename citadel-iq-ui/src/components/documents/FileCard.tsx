@@ -19,6 +19,8 @@ interface FileCardProps {
   document: DocumentSummaryDto;
   animationDelayMs?: number;
   onDeleted?: () => void;
+  /** Briefly emphasised (opened from a link in an emailed answer). */
+  highlighted?: boolean;
 }
 
 function formatSize(bytes: number): string {
@@ -31,7 +33,7 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export function FileCard({ document, animationDelayMs = 0, onDeleted }: FileCardProps) {
+export function FileCard({ document, animationDelayMs = 0, onDeleted, highlighted = false }: FileCardProps) {
   const isReady = document.status === 'Ready';
   const theme = useTheme();
   // One shared accent for every file type — matches the Download button's green — instead of a
@@ -61,11 +63,14 @@ export function FileCard({ document, animationDelayMs = 0, onDeleted }: FileCard
   return (
     <>
       <GlassSurface
+        id={`document-${document.id}`}
         hover={isReady}
         radius={16}
         onClick={isReady ? handleDownload : undefined}
         className="animate-fade-in-up"
         sx={{
+          transition: 'box-shadow 0.3s ease',
+          boxShadow: highlighted ? (t) => `0 0 0 3px ${t.palette.primary.main}` : undefined,
           p: 2,
           display: 'flex',
           alignItems: 'center',

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Alert, Box, Button, Divider, Stack, alpha, useTheme } from '@mui/material';
 import ArrowBackOutlinedIcon from '@mui/icons-material/ArrowBackOutlined';
 import CreateNewFolderOutlinedIcon from '@mui/icons-material/CreateNewFolderOutlined';
@@ -22,6 +22,7 @@ import { useActiveWorkspace } from '../session/useSession';
 import type { ProcessingStatus } from '../types/folder';
 
 const UNSETTLED_STATUSES = new Set<ProcessingStatus>(['Uploaded', 'ExtractingText', 'Chunking', 'GeneratingEmbeddings']);
+const HIGHLIGHT_MS = 4000;
 
 export function FolderPage() {
   const { folderId } = useParams<{ folderId?: string }>();
@@ -38,6 +39,11 @@ export function FolderPage() {
   const [isUploadOpen, setUploadOpen] = useState(false);
   const { showToast } = useToast();
   const previousStatusesRef = useRef<Record<string, ProcessingStatus>>({});
+  // `?document=` (links in emailed answers): scroll to that file and highlight it for a few seconds.
+  const [searchParams] = useSearchParams();
+  const linkedDocumentId = searchParams.get('document');
+  const [highlightedDocumentId, setHighlightedDocumentId] = useState<string | null>(null);
+  const loadedFolderId = contents?.folder.id ?? null;
 
   const goToFolder = (id: string) => {
     navigate(id === rootFolderId ? '/' : `/folders/${id}`);
@@ -75,6 +81,22 @@ export function FolderPage() {
 
     previousStatusesRef.current = Object.fromEntries(contents.documents.map((d) => [d.id, d.status]));
   }, [contents, showToast]);
+
+  useEffect(() => {
+    if (!linkedDocumentId || !loadedFolderId) {
+      return;
+    }
+
+    const element = window.document.getElementById(`document-${linkedDocumentId}`);
+    if (!element) {
+      return;
+    }
+
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedDocumentId(linkedDocumentId);
+    const timeout = setTimeout(() => setHighlightedDocumentId(null), HIGHLIGHT_MS);
+    return () => clearTimeout(timeout);
+  }, [linkedDocumentId, loadedFolderId]);
 
   if (error) {
     return <Alert severity="error">{error}</Alert>;
@@ -138,6 +160,7 @@ export function FolderPage() {
                       document={document}
                       animationDelayMs={index * 35}
                       onDeleted={refetch}
+                      highlighted={document.id === highlightedDocumentId}
                     />
                   ))}
                 </Box>

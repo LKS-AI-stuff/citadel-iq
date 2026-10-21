@@ -9,6 +9,8 @@ public class Membership
     public Guid WorkspaceId { get; private set; }
     public WorkspaceRole Role { get; private set; }
     public DateTimeOffset JoinedAtUtc { get; private set; }
+    /// <summary>Owners/Admins: email me when new drafts await review (the portal count always shows).</summary>
+    public bool EmailDraftNotifications { get; private set; }
 
     private Membership(Guid userId, Guid workspaceId, WorkspaceRole role, DateTimeOffset joinedAtUtc)
     {
@@ -16,6 +18,7 @@ public class Membership
         WorkspaceId = workspaceId;
         Role = role;
         JoinedAtUtc = joinedAtUtc;
+        EmailDraftNotifications = true;
     }
 
     public static Membership Create(Guid userId, Guid workspaceId, WorkspaceRole role) =>
@@ -24,5 +27,10 @@ public class Membership
     public void ChangeRole(WorkspaceRole role)
     {
         Role = role;
+    }
+
+    public void SetEmailDraftNotifications(bool enabled)
+    {
+        EmailDraftNotifications = enabled;
     }
 }

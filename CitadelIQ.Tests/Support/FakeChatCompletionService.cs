@@ -8,6 +8,9 @@ namespace CitadelIQ.Tests.Support;
 public class FakeChatCompletionService : IChatCompletionService
 {
     public string CompleteText { get; set; } = "";
+    /// <summary>When set, answers each CompleteAsync call instead of <see cref="CompleteText"/> (the email agent makes
+    /// several different calls: triage, reworded query, judge).</summary>
+    public Func<IReadOnlyList<ChatMessage>, string>? CompleteHandler { get; set; }
     public ChatUsage? CompleteUsage { get; set; }
     public bool FailOnComplete { get; set; }
 
@@ -34,7 +37,7 @@ public class FakeChatCompletionService : IChatCompletionService
             throw new AnswerGenerationException("rewrite failed");
         }
 
-        return Task.FromResult(new ChatResult(CompleteText, CompleteUsage));
+        return Task.FromResult(new ChatResult(CompleteHandler?.Invoke(messages) ?? CompleteText, CompleteUsage));
     }
 
     public async IAsyncEnumerable<ChatStreamItem> StreamAsync(IReadOnlyList<ChatMessage> messages, [EnumeratorCancellation] CancellationToken cancellationToken = default)

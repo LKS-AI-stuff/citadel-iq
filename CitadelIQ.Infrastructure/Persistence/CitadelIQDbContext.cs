@@ -20,6 +20,10 @@ public class CitadelIQDbContext(
     public DbSet<Folder> Folders => Set<Folder>();
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
+    public DbSet<EmailThread> EmailThreads => Set<EmailThread>();
+    public DbSet<EmailQuestion> EmailQuestions => Set<EmailQuestion>();
+    public DbSet<EmailDraft> EmailDrafts => Set<EmailDraft>();
+    public DbSet<OutboundEmail> OutboundEmails => Set<OutboundEmail>();
 
     /// <summary>The scope's workspace. Read per query by the query filters below (EF parameterizes context members)
     /// and per connection by <see cref="WorkspaceConnectionInterceptor"/> for row-level security.</summary>
@@ -36,11 +40,19 @@ public class CitadelIQDbContext(
         modelBuilder.ApplyConfiguration(new FolderConfiguration());
         modelBuilder.ApplyConfiguration(new DocumentConfiguration());
         modelBuilder.ApplyConfiguration(new DocumentChunkConfiguration(openAIOptions.Value.EmbeddingDimension));
+        modelBuilder.ApplyConfiguration(new EmailThreadConfiguration());
+        modelBuilder.ApplyConfiguration(new EmailQuestionConfiguration());
+        modelBuilder.ApplyConfiguration(new EmailDraftConfiguration());
+        modelBuilder.ApplyConfiguration(new OutboundEmailConfiguration());
 
         // Application-level workspace isolation (row-level security is the second, independent layer). With no
         // workspace the comparison matches nothing. Never call IgnoreQueryFilters() on these.
         modelBuilder.Entity<Folder>().HasQueryFilter(f => f.WorkspaceId == CurrentWorkspaceId);
         modelBuilder.Entity<Document>().HasQueryFilter(d => d.WorkspaceId == CurrentWorkspaceId);
         modelBuilder.Entity<DocumentChunk>().HasQueryFilter(c => c.WorkspaceId == CurrentWorkspaceId);
+        modelBuilder.Entity<EmailThread>().HasQueryFilter(t => t.WorkspaceId == CurrentWorkspaceId);
+        modelBuilder.Entity<EmailQuestion>().HasQueryFilter(q => q.WorkspaceId == CurrentWorkspaceId);
+        modelBuilder.Entity<EmailDraft>().HasQueryFilter(d => d.WorkspaceId == CurrentWorkspaceId);
+        modelBuilder.Entity<OutboundEmail>().HasQueryFilter(o => o.WorkspaceId == CurrentWorkspaceId);
     }
 }

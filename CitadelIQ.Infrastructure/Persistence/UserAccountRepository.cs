@@ -1,4 +1,5 @@
 using CitadelIQ.Application.Interfaces;
+using CitadelIQ.Application.Options;
 using CitadelIQ.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +20,29 @@ public class UserAccountRepository(CitadelIQDbContext db) : IUserAccountReposito
                from membership in memberships.DefaultIfEmpty()
                select new UserDisplayInfo(user.Id, user.DisplayName, user.ClosedAtUtc != null, membership != null ? membership.WorkspaceId : null))
             .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<ActiveSender>> FindActiveByEmailAsync(string address, bool includeDevelopmentIdentities, CancellationToken cancellationToken = default)
+    {
+        var normalized = address.Trim().ToLower();
+        if (normalized.Length == 0)
+        {
+            return [];
+        }
+
+        // lower("Email") = @address uses IX_Users_LowerEmail.
+        var rows = await (from user in db.Users.AsNoTracking()
+                          join membership in db.Memberships.AsNoTracking() on user.Id equals membership.UserId
+                          join workspace in db.Workspaces.AsNoTracking() on membership.WorkspaceId equals workspace.Id
+                          where user.Email.ToLower() == normalized
+                                && user.Email != ""
+                                && user.ClosedAtUtc == null
+                                && (includeDevelopmentIdentities || user.Issuer != AuthenticationOptions.DevelopmentIssuer)
+                          select new { user, membership, workspace })
+            .Take(2)
+            .ToListAsync(cancellationToken);
+
+        return rows.Select(r => new ActiveSender(r.user, r.membership, r.workspace)).ToList();
+    }
 
     public async Task<UserAccount> AddOrGetAsync(UserAccount user, CancellationToken cancellationToken = default)
     {

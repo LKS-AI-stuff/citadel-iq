@@ -45,6 +45,9 @@ public interface IMembershipRepository
     /// <summary>Adds a membership; a user who already has one gets a <c>ValidationException</c>.</summary>
     Task AddAsync(Membership membership, CancellationToken cancellationToken = default);
 
+    /// <summary>The member's own draft-notification email preference; not a membership change, so no lock.</summary>
+    Task SetEmailDraftNotificationsAsync(Guid userId, bool enabled, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// The only way to change an existing workspace's memberships: opens a transaction, locks the workspace row
     /// (<c>SELECT … FOR UPDATE</c>) so concurrent changes are serialized, loads the set, runs

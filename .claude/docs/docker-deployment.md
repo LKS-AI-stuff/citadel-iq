@@ -83,6 +83,11 @@ cp .env.example .env
 | `UI_PORT` | no | Host port nginx listens on; default `8080` |
 | `STORAGE_PROVIDER` and `AZURE_STORAGE_*` | no | Store files in Azure Blob Storage instead of the `documents` volume (README, Azure Blob section) |
 | `COMPOSE_SUBNET` / `UI_PROXY_IP` | no | Only if the default network `172.28.0.0/16` clashes with one on the host (step 7) |
+| `EMAIL_AGENT_MODE` | no | `Off` (default), `DraftsOnly` or `On` — the email questions agent (README, email section) |
+| `EMAIL_SUPPORT_ADDRESS`, `EMAIL_PORTAL_BASE_URL` | if the agent is on | The shared support address, and the public origin used for links in replies (e.g. `https://docs.example.com`) |
+| `EMAIL_IMAP_HOST`, `EMAIL_SMTP_HOST`, `EMAIL_USERNAME`, `EMAIL_PASSWORD` | if the agent is on | The support mailbox; empty `EMAIL_IMAP_HOST` leaves the agent unwired |
+| `EMAIL_TRUSTED_AUTHSERV_ID` | if the agent is on | The mail host's receiving server in `Authentication-Results` (e.g. `mx.google.com`) |
+| `EMAIL_SENT_FOLDER`, `EMAIL_APPEND_TO_SENT` | no | Sent folder name; `true` if the host doesn't save SMTP-sent mail itself |
 
 Use passwords without `$`, spaces, quotes or `;`. They are embedded in connection strings.
 
@@ -140,6 +145,12 @@ Compose creates three named volumes:
 
 nginx doesn't proxy `/health`, so check it from inside the network if needed:
 `docker compose exec ui wget -qO- http://api:8080/health`.
+
+**Email agent (if configured):** `docker compose exec ui wget -qO- http://api:8080/health/email` shows the mode and the
+last mailbox poll. The API container needs outbound access to the mail host (IMAP 993, SMTP 587). Start with
+`EMAIL_AGENT_MODE=DraftsOnly`, email a question from a registered account's address, and check the draft appears under
+**Email review**. Only the agent's operators should be able to open the support mailbox: it holds every organization's
+incoming questions.
 
 **Trying it on your own machine first:** set `UI_PORT=8080`, register `http://localhost:8080/signin-oidc` and
 `http://localhost:8080/signout-callback-oidc` as redirect URIs, and open `http://localhost:8080` in Chrome or Firefox.

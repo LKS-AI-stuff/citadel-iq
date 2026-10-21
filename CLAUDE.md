@@ -13,6 +13,9 @@ and run natural-language searches that return the most relevant document chunks 
 similarity against OpenAI embeddings. Search returns ranked passages; an **Ask** mode on top streams a short, cited, AI-written answer grounded only in
 the retrieved passages (RAG — see [rag.md](./.claude/technical-designs/rag.md); the original deliberate stop at
 "vector search → ranked results" is in [design.md](./.claude/technical-designs/design.md) §1, §6, §11, §20).
+Users can also **email** a question to one shared support address; an agent answers it from the sender's own
+workspace, or drafts a reply for the organization's Owners/Admins to review (see
+[support-email-agent.md](./.claude/technical-designs/support-email-agent.md) and "Email agent flow" below).
 
 It's a monorepo with two components:
 
@@ -40,17 +43,20 @@ React UI (Vite) ←same origin→ ASP.NET Core API (BFF: OIDC + HttpOnly cookie)
 ### Backend — Clean Architecture
 
 ```
-CitadelIQ.sln
+CitadelIQ.slnx
  ├─ CitadelIQ.Domain          (no dependencies)
  ├─ CitadelIQ.Application     (depends on Domain)
  ├─ CitadelIQ.Infrastructure  (depends on Application, Domain)
  ├─ CitadelIQ.FluentMigrations (schema migrations; no project dependencies)
- └─ CitadelIQ.Api             (depends on Application, Infrastructure, FluentMigrations)
+ ├─ CitadelIQ.Api             (depends on Application, Infrastructure, FluentMigrations)
+ └─ CitadelIQ.Tests           (xUnit unit + Testcontainers integration tests; see "Known gaps and conventions")
 ```
 
 **Domain** (`CitadelIQ.Domain/`): `Workspace`, `UserAccount`, `Membership`, `JoinRequest`, `Folder`, `Document`,
-`DocumentChunk`, `DocumentEmbedding` entities; `ProcessingStatus`, `SearchScope`, `WorkspaceKind`, `WorkspaceRole`,
-`JoinRequestStatus` enums; `Rules/MembershipRules` (permission table, at-least-one-Owner) and `Rules/JoinCode`;
+`DocumentChunk`, `DocumentEmbedding` entities; the email agent's `EmailThread`, `EmailQuestion` (+ `EmailSourceRef`),
+`EmailDraft`, `OutboundEmail` (`Entities/Email/`, namespace `CitadelIQ.Domain.Entities`); `ProcessingStatus`, `SearchScope`,
+`WorkspaceKind`, `WorkspaceRole`, `JoinRequestStatus`, `EmailOutcome`, `EmailReason`, `EmailDraftStatus`,
+`OutboundEmailKind`, `OutboundEmailStatus` enums; `Rules/MembershipRules` (permission table, at-least-one-Owner) and `Rules/JoinCode`;
 `DomainException`. Folders/documents/chunks carry `WorkspaceId` (children inherit it: `Folder.CreateChild(parent, …)`,
 `Document.Create(folder, …)`, `DocumentChunk.Create(document, …)`). Each workspace has its own root ("Home") folder
 (`ParentFolderId == null`, `IsRoot`); there is **no** global well-known root id any more — the UI gets it from `GET /api/me`.
@@ -69,6 +75,12 @@ dependencies (no OpenAI SDK, no ASP.NET, no disk I/O). Key pieces:
   `Documents/TextChunker` (configurable chunk size/overlap)
 - `Rag/` (`AnswerService`, `AnswerRun`, `AnswerStreamProcessor`, `PromptBuilder`, `QuestionRewriter`, `ContextSelector`,
   `CitationParser`, `AskRequestValidator`), `Settings/AppSettingsService`, `Interfaces/IChatCompletionService`
+- `Email/` — the email agent: pure rule classes (`AutomatedMailClassifier`, `SenderAuthenticator`, `EmailBodyCleaner`,
+  `ThreadMatcher`, `EmailLimitPolicy`, `ConfidenceGate`, `EmailReplyComposer`, `EmailPromptBuilder`, `EmailRetryPolicy`)
+  and services (`InboundTriageService` = scope A, `EmailQuestionService` = scope B, `OutboundSendService`,
+  `DraftNotificationService`, `EmailRetentionService`, `EmailReviewService`/`EmailStatusService` for the portal).
+  Ports: `IMailbox`, `IMailSender`, `IInboundEmailRepository`, `IOutboundEmailQueue`, `IAdminNotificationSchedule`,
+  the workspace email repositories (`IEmailRepositories.cs`) and `IEmailAgentMonitor`. Options: `EmailAgentOptions`.
 - `Search/SearchService` (resolves scope → folder ids, embeds the query, calls `IVectorSearchRepository`).
   `Search/CosineSimilarity` is **obsolete** (superseded by pgvector) and unused — kept for reference.
 - `Interfaces/` — repository and service abstractions (`IFolderRepository`,
@@ -113,12 +125,23 @@ filesystem, or a specific persistence mechanism.
   (with a message caught and turned into a safe user-facing error) when an embedding is actually
   requested.
 - `Processing/BackgroundDocumentProcessingDispatcher` — see "Upload & processing pipeline" below.
+- `Email/` — MailKit `ImapMailbox` (IDLE + command connections) / `SmtpMailSender`, `MimeInboundParser` (trusted
+  `Authentication-Results`, DKIM-signed Message-ID, automation headers, `HtmlToText`), `MailboxOptions`
+  (`EmailAgent:Mailbox`, Infrastructure-only), credential providers (Password; OAuth2 needs an `IMailAccessTokenSource`,
+  not implemented yet), `DisabledMailbox` (registered when `Mailbox:Host` is empty). `Email/Hosting/`: the advisory-lock
+  `EmailAgentLeader`, the testable pipelines (`MailboxSynchronizer`, `InboundEmailPipeline`, `OutboundEmailPipeline`,
+  `EmailMaintenanceRunner`) and the four `BackgroundService` loops. `AddEmailAgent` (called by `AddInfrastructure`)
+  registers the hosted loops only when a mailbox host is configured. The system tables `InboundEmails`,
+  `OutboundEmailQueue`, `AdminNotificationSchedule` are **not** in the EF model — their repositories use SQL
+  (`SqlQuery`/`ExecuteSqlInterpolated`, `FOR UPDATE SKIP LOCKED` claims).
 - `Validation/FileValidator` — extension/size checks from `UploadOptions`.
 
 **Api** (`CitadelIQ.Api/`): thin controllers, DI registration, CORS, global exception middleware,
-config binding. `Middleware/ExceptionHandlingMiddleware` converts `DomainException` /
-`Application.Common.ValidationException` / `Application.Common.NotFoundException` into safe
-`ProblemDetails` responses and maps everything else to a generic 500 — never leaking stack traces,
+config binding. `Middleware/ExceptionHandlingMiddleware` converts the known exception types into safe
+`ProblemDetails` responses — `ValidationException`/`DomainException` → 400, `UnauthenticatedException` → 401,
+`ForbiddenException` → 403, `NotFoundException` → 404, `AnswerGenerationException` → 502,
+`FeatureDisabledException` → 503 (all in `Application.Common` except `DomainException`), plus ASP.NET's
+`BadHttpRequestException` (413/400) — and maps everything else to a generic 500, never leaking stack traces,
 exception types, or configuration.
 
 ### Upload & processing pipeline
@@ -188,31 +211,67 @@ chunks, prompts or answers. Answers are rendered as plain text (no Markdown). `/
 `Rag:Temperature` / `Rag:MaxOutputTokens` are sent to the model only when set. **Phase 0 (real-model compatibility
 spike for `OpenAI:ChatModel`) and Phase 6 manual QA have not been run** — see rag.md §16.
 
+### Email agent flow
+
+A deliberate exception to "no job queue" (requirements decision 10): email state lives in PostgreSQL so a restart
+never loses an email or sends a duplicate. Four hosted loops run only on the instance holding the advisory lock and
+while `EmailAgent:Mode` (read every iteration) isn't `Off`:
+1. **Listener** — IMAP IDLE (poll fallback) → `InboundEmails` row per (UIDVALIDITY, UID), `ON CONFLICT DO NOTHING`;
+   supersedes unfinished rows of an old UIDVALIDITY; re-archives finished mail still in the inbox.
+2. **Processor** — claims the oldest due row (lease), then **scope A** (no workspace ⇒ RLS shows no content): fetch,
+   own-mail/duplicate check, aligned SPF/DKIM from the provider's own `Authentication-Results`, exactly one active
+   account with that address. Rejections are recorded only in `InboundEmails` (reason + sender domain). Then **scope B**
+   enters the sender's workspace *before* touching the DbContext: automated? → thread (In-Reply-To/References → our
+   `OutboundEmails.MessageId`; notification replies ignored) → caps (no model call) → triage (JSON) → thread rules →
+   `AnswerService.StartAsync` (+ one reworded retry via `AnswerRetrieval` when nothing clears `MinCitedSimilarity`) →
+   judge → `ConfidenceGate` → the decision table (design §5.2) → **one transaction** (question, draft, outbound +
+   queue rows, thread counters, admin notification schedule, processing row Done). The message is archived after the
+   commit. Transient failures retry with backoff; then organizations get a "Failed" draft + holding reply, individuals
+   an activity row only. An unreachable mailbox postpones without spending attempts.
+3. **Sender** — claims a queue row, enters its workspace, re-reads the recipient (`ToUserId` → `Users.Email`; cancels if
+   no longer an active member), marks `Sending` and commits **before** SMTP; a row found in `Sending` is first looked up
+   in the Sent folder by its pre-generated Message-ID.
+4. **Maintenance** — batched draft notifications (≤ 1 per admin per interval, none if already handled), draft expiry
+   and retention per workspace, system-table retention, archive purge. Retention keeps running while `Off`.
+
+Recipients always come from the user record, never the message; the model never gets tools. Logs: ids, outcomes,
+reasons, token counts and timings only. The writes that finish a claim apply only while the row is still
+`Processing`; if a UIDVALIDITY resync superseded it mid-flight the whole commit rolls back
+(`InboundEmailSupersededException`) and the message is answered once, under its new key. **Phase 0 (real Gmail mailbox + chat-model JSON spike) has not been run** —
+design §15 is still empty.
+
 ### Frontend architecture
 
 ```
 citadel-iq-ui/src/
- ├─ app/            AppShell (layout + search panel host), TopNavigation, Footer, FloatingShapes,
+ ├─ app/            AppShell (layout + search panel host), SessionGate, TopNavigation, Footer, FloatingShapes,
  │                   FolderPage (route)
  ├─ components/
  │   ├─ folders/    Breadcrumbs, FolderCard, CreateFolderDialog
- │   ├─ documents/  FileCard, FileIcon, ProcessingStatusIcon
+ │   ├─ documents/  FileCard, FileIcon, ProcessingStatusIcon, UploaderCaption
  │   ├─ upload/     UploadDialog, UploadDropzone
  │   ├─ search/     SearchPanel, SearchScopeSelector, SearchInput, SearchResults, SearchResultCard
+ │   ├─ ask/        AskPanel, TurnBlock, AnswerText, SourceList, SessionLimitDialog
+ │   ├─ account/    AccountMenu (top bar; "Email review"/"My emails" item, pending-draft badge), SignOutButton, StandalonePage
+ │   ├─ email/      EmailSupportLine (sidebar + account menu), DraftReview, EmailActivityList, emailLabels
  │   └─ common/      EmptyState, LoadingState, ToastProvider, ConfirmDialog, GlassSurface,
  │                    IconBadge, SectionHeader, AssistantInfoPanel
  ├─ session/        SessionProvider (GET /api/me; 401 → sign-in, "account closed" → refetch), useSession /
  │                   useActiveWorkspace (workspace, role, `can.deleteContent/renameFolders/administer`)
+ ├─ settings/       SettingsProvider (GET /api/settings, fetched once), useAppSettings
  ├─ pages/          SignInPage, OnboardingPage, PendingApprovalPage, AccountClosedPage (shown by app/SessionGate),
- │                   AdminPage (/admin: join requests, members + roles, join code)
- ├─ components/account/  AccountMenu (top bar), SignOutButton (form post), StandalonePage
+ │                   AdminPage (/admin: join requests, members + roles, join code),
+ │                   EmailPage (/email: review queue + notification switch for Owners/Admins of organizations; activity)
  ├─ hooks/          useMembers, useJoinRequests, useJoinCode, useFolderContents, useCreateFolder, useRenameFolder, useDeleteFolder,
- │                   useDeleteDocument, useUpload, useSearch
+ │                   useDeleteDocument, useUpload, useSearch, useAsk, useEmailStatus, useDrafts, useEmailActivity,
+ │                   usePendingDraftCount
  ├─ api/            apiClient (same-origin fetch wrapper + ApiError; X-CSRF on non-GET; reports 401/403 to the
- │                   session), sessionApi, organizationApi, foldersApi, documentsApi, searchApi
+ │                   session), sse (fetch-based SSE client), sessionApi, organizationApi, foldersApi, documentsApi,
+ │                   searchApi, askApi, settingsApi, emailApi
  ├─ theme/          ColorModeProvider (light/dark, persisted to localStorage), theme.ts, glass.ts
- ├─ types/          folder.ts, search.ts — hand-kept in sync with backend DTOs
- └─ utils/          highlightMatches.tsx — best-effort literal term highlighting in search snippets
+ ├─ types/          folder.ts, search.ts, ask.ts, session.ts, organization.ts, email.ts — hand-kept in sync with backend DTOs
+ └─ utils/          highlightMatches.tsx — best-effort literal term highlighting in search snippets;
+                     citations.ts — `[n]` citation marker parsing
 ```
 
 **Ask UI**: `SearchPanel` is the drawer shell with an **Ask | Passages only** toggle (Ask is hidden when
@@ -265,6 +324,8 @@ as a gap on both sides that grows with the window. Cap the width but don't cente
 fall to the right instead.
 
 Notes:
+- `FolderPage` reads `?document=<id>` (the links in emailed answers: `/folders/{folderId}?document={documentId}`), scrolls
+  to that `FileCard` and highlights it for a few seconds. `SearchResultDto`/`AnswerSourceDto` carry `folderId` for this.
 - `FolderPage`'s toolbar shows a **Back** button (before "New folder") whenever the current folder
   isn't the workspace's Home (`session.workspace.rootFolderId`), navigating to `contents.folder.parentFolderId` — added because relying on the
   breadcrumbs alone to go up a level isn't discoverable for every user.
@@ -401,7 +462,7 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 | `Authentication:Session` | `CookieName`, `IdleTimeoutHours`, `AbsoluteLifetimeDays` | `__Host-citadeliq`, `8`, `7` | HttpOnly, Secure, SameSite=Lax session cookie |
 | `DataProtection` | `KeysPath` | `""` (ASP.NET per-user default) | Where the cookie-encryption key ring is persisted; Docker uses `/app/App_Data/keys` on the `dpkeys` volume. Losing it signs everyone out |
 | `Authentication:JoinRateLimit` | `PermitLimit` / `WindowMinutes` | `10` / `60` | Join-code attempts per user |
-| `OpenAI` | `EmbeddingModel` | `text-embedding-3-small` | Embedding model name |
+| `OpenAI` | `EmbeddingModel` | *(empty in `appsettings.json` — set it via user-secrets / `OpenAI__EmbeddingModel`)* | Embedding model name; use `text-embedding-3-small` (1536 dims, matches the column). **Gotcha:** the committed `""` overrides `OpenAIOptions`' code default (`text-embedding-3-large`, 3072 dims — which wouldn't match `vector(1536)` anyway) |
 | `ConnectionStrings` | `CitadelIQ` | *(empty — user-secrets / env var only)* | Runtime role (`citadeliq_app`); the app refuses to start if it's empty or bypasses RLS |
 | `OpenAI` | `EmbeddingDimension` | `1536` | Size of the pgvector column — must match the model; changing it needs a new FluentMigrations migration (the migration hardcodes `vector(1536)`) |
 | `OpenAI` | `ApiKey` | *(user-secrets only)* | Never in `appsettings.json` |
@@ -417,6 +478,17 @@ All in `CitadelIQ.Api/appsettings.json`, bound to `Options` classes in `CitadelI
 | `Rag:RateLimit` | `PermitLimit`/`WindowSeconds`/`MaxConcurrentStreams` | `20`/`60`/`2` | Per-user limits on `/api/answers` |
 | `Storage` | `Provider` | `LocalDisk` | `LocalDisk` or `AzureBlob`; unknown values fail at startup |
 | `Storage:AzureBlob` | `AccountName`, `ContainerName`, `ServiceUri`, `CreateContainerIfMissing` | `""`, `documents`, unset, `false` | Account/container are config. `ConnectionString` is a **secret** (user-secrets / `Storage__AzureBlob__ConnectionString`), takes precedence over Entra ID |
+| `EmailAgent` | `Mode`, `SupportAddress`, `SupportDisplayName`, `PortalBaseUrl` | `Off`, `""`, `CitadelIQ`, `""` | Kill switch (`Off`/`DraftsOnly`/`On`); address + portal origin required when not `Off` |
+| `EmailAgent` | `AllowDevelopmentIdentities` | `false` (`true` in Development) | Dev-login addresses count as verified senders |
+| `EmailAgent` | `ConfidenceThreshold`, `MinCitedSimilarity`, `MaxSearchAttempts` | `0.8`, `0.45`, `2` | Auto-reply gates (untuned); 1 = no reworded retry |
+| `EmailAgent` | `MaxBodyChars`, `MaxAutomaticRepliesPerThread`, `MaxDraftChars` | `6000`, `5`, `10000` | |
+| `EmailAgent:Limits` | `PerUserPerHour`, `PerOrganizationPerDay`, `TotalPerDay`, `MaxSentPerDay` | `10`, `200`, `2000`, `1500` | Rolling windows; over a cap ⇒ no model call (org: draft, individual: ignored) |
+| `EmailAgent` | `MaxAttempts`, `RetryDelaysSeconds`, `ProcessingLeaseMinutes` | `3`, `[60,300,900]`, `10` | Retries (the property defaults to empty — the binder appends to arrays) |
+| `EmailAgent` | `PollIntervalSeconds`, `IdleRefreshMinutes`, `NotificationIntervalMinutes` | `120`, `9`, `15` | |
+| `EmailAgent` | `DraftExpiryDays`, `ActivityRetentionDays`, `MaintenanceIntervalMinutes`, `HealthFailureMinutes` | `30`, `90`, `60`, `10` | |
+| `EmailAgent:Texts` | holding / no-confident / footer texts, `NotificationMarker` | design §6.4 | |
+| `EmailAgent:Mailbox` | `Host`, `ImapPort`, `SmtpHost`, `SmtpPort`, `Username`, `Password`, `AuthMode` | `""`, `993`, `""`, `587`, `""`, *(secret)*, `Password` | Empty `Host` ⇒ not wired; `Password` via user-secrets / `EmailAgent__Mailbox__Password` only |
+| `EmailAgent:Mailbox` | `InboxFolder`, `ArchiveFolder`, `SentFolder`, `AppendToSent`, `TrustedAuthServId` | `INBOX`, `CitadelIQ/Processed`, `[Gmail]/Sent Mail`, `false`, `""` | `TrustedAuthServId` required when wired (e.g. `mx.google.com`) |
 | `Storage` | `DocumentsPath` | `App_Data/documents` | Relative to `IHostEnvironment.ContentRootPath` — resolved once at host startup, not `Directory.GetCurrentDirectory()` (which depends on how the process was launched) |
 
 ## API contract
@@ -451,8 +523,20 @@ DELETE /api/documents/{documentId}          # removes stored file, chunks, and e
 POST   /api/search                          # { query, currentFolderId, searchScope, topK? }
 POST   /api/answers/stream                  # SSE: question, sources, text*, [notfound], done | error — body { question, currentFolderId, searchScope, history[] }
 GET    /api/settings                        # client-safe limits: askEnabled, maxQuestionLength, maxHistoryTurns, maxHistoryChars
+GET    /api/email/status                    # { supportAddress|null (Off, or no mailbox configured), mode, yourAddress, canUse, reason }
+GET    /api/email/activity?before=&skip=&limit=&mine=  # Admin+ of an org: whole workspace; everyone else: own emails.
+                                            # Next page: before = last row's time, skip = rows already loaded at that time
+GET    /api/email/drafts?status=Pending     # Admin+ (404 in individual workspaces)
+GET    /api/email/drafts/count              # Admin+ → { pending }
+GET    /api/email/drafts/{id}               # Admin+ → question, suggestedText, missing, sources, …
+POST   /api/email/drafts/{id}/send          # { text } → 204; 400 blank/too long/already handled/asker left
+POST   /api/email/drafts/{id}/dismiss       # Admin+ → 204
+GET    /api/email/notification-preference   # Admin+ → { emailOnNewDrafts }
+PUT    /api/email/notification-preference   # { emailOnNewDrafts } → 204
 GET    /health
 GET    /health/storage                      # document-store reachability (503 if the Azure container is unreachable)
+GET    /health/email                        # { mode, leader, lastPollUtc }; 503 when on without a mailbox, or the leader
+                                            # hasn't polled successfully for HealthFailureMinutes; non-leaders 200
 ```
 
 Everything except `/api/settings`, `/health*` and `/auth/*` requires sign-in (401); content endpoints also require an
@@ -496,7 +580,8 @@ converter registered in `Program.cs`), e.g. `"searchScope": "CurrentFolderAndSub
 Organization SSO (designed to slot in — auth design §4 decision 25), multiple workspaces per user, email invites,
 folder/document-level permissions, deleting workspaces, server-side conversation history, search history/pagination, hybrid keyword search, file rename, move,
 bulk operations, document previews, audit logging, background job queues (the current dispatcher
-is in-process fire-and-forget, not a persistent queue). See [design.md](./.claude/technical-designs/design.md) §9 and §21 for the
+is in-process fire-and-forget, not a persistent queue — the email agent's PostgreSQL processing/outbox tables are the
+one deliberate exception, for that feature only). See [design.md](./.claude/technical-designs/design.md) §9 and §21 for the
 full future-enhancements list and the reasoning behind each deferral. (Folder *rename* and
 *deletion* — including cascade delete of a folder's subtree — are in scope; see the API contract
 above. So are sign-in, individual/organization workspaces and roles.)
@@ -512,10 +597,13 @@ above. So are sign-in, individual/organization workspaces and roles.)
   `RunAsAsync(user, …)` for anyone else), and exercises the real repositories/services: workspace isolation for every
   entry point, RLS on its own, composite FKs, onboarding, organization admin incl. concurrent last-Owner changes, roles,
   uploader display, and (`AuthApiTests` via `Support/ApiFactory` + `TestAuthHandler`) 401/403/404, CSRF, closed accounts,
-  join-code rate limiting and the startup guards; plus migrations, upload→process, page/sheet locations, failure cleanup, vector search ranking,
+  join-code rate limiting and the startup guards; the email agent (`EmailAgentTests`, `EmailApiTests`: sender resolution,
+isolation + RLS on the email tables, the decision table per mode/workspace kind, caps, threads, crash/UIDVALIDITY
+recovery, review queue races, retention — via `FakeMailbox`/`FakeMailSender` and `FakeChatCompletionService.CompleteHandler`);
+plus migrations, upload→process, page/sheet locations, failure cleanup, vector search ranking,
   scopes, `MinSimilarity`, Ready-only search, folder uniqueness (incl. concurrent creates) and cascade delete.
   Only OpenAI (`FakeEmbeddingService`, deterministic topic-axis vectors) and the background dispatcher (no-op;
-  tests call `ProcessDocumentAsync`) are replaced. `Integration/AnswersApiTests` drive the real pipeline through `WebApplicationFactory` (SSE framing/order, error events, 400/404/503/429, settings) with `FakeChatCompletionService`; `Unit/RagUnitTests` cover the RAG pieces. No frontend tests yet.
+  tests call `ProcessDocumentAsync`) are replaced. `Integration/AnswersApiTests` drive the real pipeline through `WebApplicationFactory` (SSE framing/order, error events, 400/404/503/429, settings) with `FakeChatCompletionService`; `Unit/RagUnitTests` cover the RAG pieces; `Unit/EmailAgentUnitTests` the email rule classes, prompts, MIME parsing and `AnswerRetrieval`. No frontend tests yet.
 - **Obsolete-but-kept code:** `InMemory*Repository` classes and `CosineSimilarity` are marked `[Obsolete]`,
   not registered in DI, and kept on purpose — don't delete them or wire them back in.
 - **Stop hook** (`.claude/hooks/kill-stale-backend.sh`): kills the backend on `:5157` at the end of a turn only if

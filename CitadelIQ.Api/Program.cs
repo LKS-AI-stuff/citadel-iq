@@ -5,11 +5,13 @@ using CitadelIQ.Api.Controllers;
 using CitadelIQ.Api.Middleware;
 using CitadelIQ.Application;
 using CitadelIQ.Application.Accounts;
+using CitadelIQ.Application.Interfaces;
 using CitadelIQ.Application.Options;
 using CitadelIQ.FluentMigrations;
 using CitadelIQ.Infrastructure;
 using CitadelIQ.Infrastructure.Persistence;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Options;
 using AppAuthenticationOptions = CitadelIQ.Application.Options.AuthenticationOptions;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,6 +30,7 @@ builder.Services.Configure<OpenAIOptions>(builder.Configuration.GetSection("Open
 builder.Services.AddOptions<StorageOptions>().Bind(builder.Configuration.GetSection("Storage")).ValidateOnStart();
 builder.Services.AddOptions<RagOptions>().Bind(builder.Configuration.GetSection("Rag")).ValidateOnStart();
 builder.Services.AddOptions<AppAuthenticationOptions>().Bind(builder.Configuration.GetSection("Authentication")).ValidateOnStart();
+builder.Services.AddOptions<EmailAgentOptions>().Bind(builder.Configuration.GetSection("EmailAgent")).ValidateOnStart();
 
 builder.AddCitadelDataProtection();
 builder.AddCitadelAuthentication();
@@ -160,6 +163,13 @@ if (migrateOnStartup)
     app.Services.ApplyDatabaseMigrations();
 }
 
+// On without a mailbox is allowed (local development and tests run that way) but does nothing: say so loudly.
+if (app.Services.GetRequiredService<IOptionsMonitor<EmailAgentOptions>>().CurrentValue.Mode != EmailAgentMode.Off
+    && !app.Services.GetRequiredService<IEmailAgentMonitor>().MailboxConfigured)
+{
+    app.Logger.LogWarning("EmailAgent:Mode is not Off but no support mailbox is configured (EmailAgent:Mailbox:Host); the email agent will not run");
+}
+
 // Refuse to start if the runtime role would bypass row-level security (superuser / BYPASSRLS).
 await app.Services.EnsureRuntimeRoleEnforcesRowLevelSecurityAsync();
 
@@ -193,6 +203,20 @@ app.MapGet("/health/storage", async (IServiceProvider services, CancellationToke
     return await probe.IsAvailableAsync(cancellationToken)
         ? Results.Ok(new { status = "healthy", provider = StorageOptions.AzureBlobProvider })
         : Results.Json(new { status = "unavailable", provider = StorageOptions.AzureBlobProvider }, statusCode: StatusCodes.Status503ServiceUnavailable);
+}).AllowAnonymous();
+
+// Email agent: mode, whether this instance leads, and the last successful mailbox poll. 503 when the agent is on without
+// a configured mailbox, or when the leader hasn't polled successfully for EmailAgent:HealthFailureMinutes (failing,
+// or never polled since it became leader). Other instances report 200 with leader=false. No counts, no addresses.
+app.MapGet("/health/email", (IOptionsMonitor<EmailAgentOptions> emailOptions, IEmailAgentMonitor monitor) =>
+{
+    var o = emailOptions.CurrentValue;
+    var lastSuccess = monitor.LastPollUtc ?? monitor.LeaderSinceUtc;
+    var stale = monitor.IsLeader && lastSuccess is { } since
+        && DateTimeOffset.UtcNow - since > TimeSpan.FromMinutes(o.HealthFailureMinutes);
+    var healthy = o.Mode == EmailAgentMode.Off || (monitor.MailboxConfigured && !stale);
+    var body = new { mode = o.Mode.ToString(), leader = monitor.IsLeader, lastPollUtc = monitor.LastPollUtc };
+    return healthy ? Results.Ok(body) : Results.Json(body, statusCode: StatusCodes.Status503ServiceUnavailable);
 }).AllowAnonymous();
 
 app.Run();

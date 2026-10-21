@@ -12,4 +12,7 @@ public interface IWorkspaceRepository
     Task AddAsync(Workspace workspace, CancellationToken cancellationToken = default);
 
     Task UpdateAsync(Workspace workspace, CancellationToken cancellationToken = default);
+
+    /// <summary>Every workspace id (background maintenance enters each in its own scope).</summary>
+    Task<IReadOnlyList<Guid>> ListIdsAsync(CancellationToken cancellationToken = default);
 }

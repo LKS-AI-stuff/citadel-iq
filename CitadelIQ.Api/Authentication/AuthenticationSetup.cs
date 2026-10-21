@@ -17,7 +17,7 @@ public static class AuthenticationSetup
     public const string CookieScheme = CookieAuthenticationDefaults.AuthenticationScheme;
     public const string OidcScheme = OpenIdConnectDefaults.AuthenticationScheme;
     public const string SignedInPolicy = "SignedIn";
-    public const string DevelopmentIssuer = "urn:citadeliq:dev";
+    public const string DevelopmentIssuer = AppAuthenticationOptions.DevelopmentIssuer;
 
     public static void AddCitadelAuthentication(this WebApplicationBuilder builder)
     {
@@ -96,7 +96,9 @@ public static class AuthenticationSetup
                             return;
                         }
 
-                        var email = principal.FindFirst("email")?.Value ?? principal.FindFirst("preferred_username")?.Value;
+                        // Only the verified `email` claim is a matchable address (email agent decision 15): no
+                        // preferred_username fallback, so an account without the claim stores "" and is never matched.
+                        var email = principal.FindFirst("email")?.Value;
                         var name = principal.FindFirst("name")?.Value;
                         var accounts = context.HttpContext.RequestServices.GetRequiredService<IAccountService>();
                         var user = await accounts.EnsureUserAsync(issuer, subject, email, name, context.HttpContext.RequestAborted);

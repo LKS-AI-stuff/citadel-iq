@@ -1,5 +1,6 @@
 using CitadelIQ.Application.Accounts;
 using CitadelIQ.Application.Documents;
+using CitadelIQ.Application.Email;
 using CitadelIQ.Application.Folders;
 using CitadelIQ.Application.Mapping;
 using CitadelIQ.Application.Options;
@@ -42,6 +43,20 @@ public static class DependencyInjection
         services.AddSingleton<IValidateOptions<RagOptions>, RagOptionsValidator>();
         services.AddSingleton<IValidateOptions<StorageOptions>, StorageOptionsValidator>();
         services.AddSingleton<IValidateOptions<AuthenticationOptions>, AuthenticationOptionsValidator>();
+
+        // Email agent: the decision services are scoped (one per email scope / request); the rule classes are singletons.
+        services.AddSingleton<IValidateOptions<EmailAgentOptions>, EmailAgentOptionsValidator>();
+        services.AddSingleton<AutomatedMailClassifier>();
+        services.AddSingleton<EmailBodyCleaner>();
+        services.AddSingleton<EmailReplyComposer>();
+        services.AddScoped<EmailModelClient>();
+        services.AddScoped<InboundTriageService>();
+        services.AddScoped<EmailQuestionService>();
+        services.AddScoped<OutboundSendService>();
+        services.AddScoped<DraftNotificationService>();
+        services.AddScoped<EmailRetentionService>();
+        services.AddScoped<IEmailReviewService, EmailReviewService>();
+        services.AddScoped<IEmailStatusService, EmailStatusService>();
         return services;
     }
 }

@@ -1,6 +1,7 @@
 import { Box, Chip, Stack, Typography, alpha } from '@mui/material';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import { GlassSurface } from './GlassSurface';
+import { EmailSupportLine } from '../email/EmailSupportLine';
 
 /** A persistent "what the assistant does" blurb — lives outside the main content column so it
  * never mounts/unmounts on navigation (see AppShell), avoiding any layout shift. */
@@ -54,6 +55,10 @@ export function AssistantInfoPanel() {
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
         Prefer raw results? Switch to "Passages only" in the search panel (Ctrl/⌘ K) to see ranked passages by meaning.
       </Typography>
+
+      <Box sx={{ mt: 2.5 }}>
+        <EmailSupportLine />
+      </Box>
     </GlassSurface>
   );
 }

@@ -54,6 +54,17 @@ services:
       Storage__AzureBlob__ContainerName: ${AZURE_STORAGE_CONTAINER:-documents}
       Storage__AzureBlob__ConnectionString: ${AZURE_STORAGE_CONNECTION_STRING:-}
       Search__MinSimilarity: ${SEARCH_MIN_SIMILARITY:-0.25}
+      # Email questions agent (off unless configured; see .env.example and the README's email section).
+      EmailAgent__Mode: ${EMAIL_AGENT_MODE:-Off}
+      EmailAgent__SupportAddress: ${EMAIL_SUPPORT_ADDRESS:-}
+      EmailAgent__PortalBaseUrl: ${EMAIL_PORTAL_BASE_URL:-}
+      EmailAgent__Mailbox__Host: ${EMAIL_IMAP_HOST:-}
+      EmailAgent__Mailbox__SmtpHost: ${EMAIL_SMTP_HOST:-}
+      EmailAgent__Mailbox__Username: ${EMAIL_USERNAME:-}
+      EmailAgent__Mailbox__Password: ${EMAIL_PASSWORD:-}
+      EmailAgent__Mailbox__TrustedAuthServId: ${EMAIL_TRUSTED_AUTHSERV_ID:-}
+      EmailAgent__Mailbox__SentFolder: "${EMAIL_SENT_FOLDER:-[Gmail]/Sent Mail}"
+      EmailAgent__Mailbox__AppendToSent: ${EMAIL_APPEND_TO_SENT:-false}
       Database__MigrateOnStartup: "true"
       # Session-cookie encryption keys on a volume, so restarts/rebuilds don't sign everyone out.
       DataProtection__KeysPath: /app/App_Data/keys
